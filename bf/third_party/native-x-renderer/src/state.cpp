@@ -85,6 +85,15 @@ bool SkippedConstants(bool skip_constants, uint32_t reg, uint32_t count) {
                             (reg >= kBoolLoopConstants && reg + count <= kBoolLoopConstants + kBoolLoopDwords));
 }
 
+bool ScannedConstants(const uint8_t* base, uint32_t reg, uint32_t p, uint32_t count, PacketScan& out) {
+  if (reg < kFloatConstants || reg + count > kFloatConstants + kFloatDwords) return false;
+  const auto* source = reinterpret_cast<const uint32_t*>(GuestPointer(base, p));
+  out.constants.push_back(reg);
+  out.constants.push_back(count);
+  out.constants.insert(out.constants.end(), source, source + count);
+  return true;
+}
+
 // `copy_microcode`: a shader load's microcode is copied (a scan when a segment ends: the library may reuse its
 // memory before the call returns); otherwise it is read where it is, before the call returns (D72).
 // A draw packet found inside an INDIRECT_BUFFER (depth 1), with its header's CPU address and the address past it.
@@ -103,7 +112,7 @@ void ScanPackets(const uint8_t* base, uint32_t begin, uint32_t end, PacketScan& 
         uint32_t reg = header & 0x7FFF;
         bool one = (header >> 15) & 1;
         if (p + 4 * count > end) return void(out.complete = false);
-        if (!SkippedConstants(skip_constants, reg, one ? 1 : count)) {
+        if (!SkippedConstants(skip_constants, reg, one ? 1 : count) && (one || !ScannedConstants(base, reg, p, count, out))) {
           for (uint32_t i = 0; i < count; ++i) out.writes.emplace_back(one ? reg : reg + i, Load32(base, p + 4 * i));
         }
         p += 4 * count;
@@ -139,14 +148,14 @@ void ScanPackets(const uint8_t* base, uint32_t begin, uint32_t end, PacketScan& 
             case 0x2D: {  // SET_CONSTANT
               uint32_t ot = Load32(base, p);
               uint32_t reg = ConstantBase((ot >> 16) & 0xFF) + (ot & 0x7FF);
-              if (SkippedConstants(skip_constants, reg, count - 1)) break;
+              if (SkippedConstants(skip_constants, reg, count - 1) || ScannedConstants(base, reg, p + 4, count - 1, out)) break;
               for (uint32_t i = 1; i < count; ++i) out.writes.emplace_back(reg + i - 1, Load32(base, p + 4 * i));
               break;
             }
             case 0x55:    // SET_CONSTANT2
             case 0x56: {  // SET_SHADER_CONSTANTS
               uint32_t reg = Load32(base, p) & 0xFFFF;
-              if (SkippedConstants(skip_constants, reg, count - 1)) break;
+              if (SkippedConstants(skip_constants, reg, count - 1) || ScannedConstants(base, reg, p + 4, count - 1, out)) break;
               for (uint32_t i = 1; i < count; ++i) out.writes.emplace_back(reg + i - 1, Load32(base, p + 4 * i));
               break;
             }
@@ -239,6 +248,7 @@ bool DeviceLayoutComplete(const DeviceLayout& d, const char* feature) {
 
 void PacketScan::Clear() {
   writes.clear();
+  constants.clear();
   predicated_writes.clear();
   loads.clear();
   shader_loads.clear();
@@ -476,7 +486,7 @@ void NoteRecordedDraw(uint32_t begin, uint32_t end, const std::array<SurfaceSnap
   }
   while (it != r.by_begin.end() && it->first < end) it = r.by_begin.erase(it);
   const uint64_t generation = ++r.generation;
-  r.by_begin[begin] = {end, generation, surfaces};
+  r.by_begin.emplace_hint(it, begin, RecordedDraws::Entry{end, generation, surfaces});
   r.order.emplace_back(begin, generation);
   while (r.order.size() > kRecordedDraws) {
     auto old = r.by_begin.find(r.order.front().first);
@@ -526,21 +536,6 @@ const TrackedCall* StateTracker::LeaveReplay(Call call, const uint8_t* base, boo
   Gather(p, call, false, base);
   last_ = {call, false, p.device, GpuAddress(p.begin), GpuAddress(end), &scan_};
   return &last_;
-}
-
-void RegisterRecord::Value(uint32_t reg, uint32_t value) {
-  if (values_at_ < data.size()) {
-    uint32_t count = data[values_at_] & 0xFFFFFF;
-    if (data[values_at_ + 1] + count == reg && values_at_ + 2 + count == data.size()) {
-      ++data[values_at_];
-      data.push_back(value);
-      return;
-    }
-  }
-  values_at_ = data.size();
-  data.push_back((uint32_t(kValues) << 24) | 1);
-  data.push_back(reg);
-  data.push_back(value);
 }
 
 void ApplyRecord(const uint32_t* record, size_t size, uint32_t* registers) {
@@ -658,6 +653,9 @@ void StateTracker::Gather(const Pending& p, Call call, bool draw, const uint8_t*
     } else {
       SendValue(reg, value);
     }
+  }
+  for (size_t i = 0; !draw && i < scan_.constants.size(); i += 2 + scan_.constants[i + 1]) {
+    Send(scan_.constants[i], reinterpret_cast<const uint8_t*>(&scan_.constants[i + 2]), scan_.constants[i + 1]);
   }
   for (const auto& [reg, value] : scan_.loads) {
     if (reg < rex::graphics::RegisterFile::kRegisterCount) SendValue(reg, value);

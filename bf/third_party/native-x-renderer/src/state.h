@@ -62,7 +62,20 @@ struct RegisterRecord {
     data.insert(data.end(), source, source + count);
   }
   // Joins the kValues run it continues when that is the last one.
-  void Value(uint32_t reg, uint32_t value);
+  void Value(uint32_t reg, uint32_t value) {
+    if (values_at_ < data.size()) {
+      uint32_t count = data[values_at_] & 0xFFFFFF;
+      if (data[values_at_ + 1] + count == reg && values_at_ + 2 + count == data.size()) {
+        ++data[values_at_];
+        data.push_back(value);
+        return;
+      }
+    }
+    values_at_ = data.size();
+    data.push_back((uint32_t(kValues) << 24) | 1);
+    data.push_back(reg);
+    data.push_back(value);
+  }
   void Clear() {
     data.clear();
     values_at_ = SIZE_MAX;
@@ -85,6 +98,7 @@ struct PacketScan {
   // (register, value), in order: type-0/1 writes and SET_CONSTANT*, from the ring and from the indirect
   // buffers it calls. Bin-predicated packets (per tile) are not included.
   std::vector<std::pair<uint32_t, uint32_t>> writes;
+  std::vector<uint32_t> constants;
   // Register writes in bin-predicated packets (per tile: window offsets, the occlusion query's sample
   // count address), in order. Not applied to the register file.
   std::vector<std::pair<uint32_t, uint32_t>> predicated_writes;
