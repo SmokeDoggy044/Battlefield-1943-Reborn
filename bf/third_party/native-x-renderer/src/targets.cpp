@@ -226,9 +226,16 @@ HostTarget* RenderTargets::Get(const GuestSurface& s, Kind kind) {
   Key key{SurfaceKey(s), kind};
   uint32_t guest_format = std::get<4>(std::get<0>(key));
   bool reduced = kind == Kind::kReduced, shadow = kind == Kind::kShadow;
+  for (auto& [k, t] : recent_) {
+    if (t && k == key) {
+      t->last_used = frame_;
+      return t->texture ? t : nullptr;
+    }
+  }
   auto it = targets_.find(key);
   if (it != targets_.end()) {
     it->second.last_used = frame_;
+    recent_[recent_next_++ % recent_.size()] = {key, &it->second};
     return it->second.texture ? &it->second : nullptr;
   }
   HostTarget& target = targets_[key];
@@ -643,7 +650,11 @@ uint64_t ResolvedTextures::bytes() const {
   return bytes;
 }
 
-Freed RenderTargets::EndFrame(uint64_t unused_frames) { return FreeUnused(targets_, frame_, unused_frames); }
+Freed RenderTargets::EndFrame(uint64_t unused_frames) {
+  const Freed freed = FreeUnused(targets_, frame_, unused_frames);
+  if (freed.count) recent_ = {};
+  return freed;
+}
 
 Freed ResolvedTextures::EndFrame(uint64_t unused_frames, uint64_t keep_bytes) {
   Freed freed;

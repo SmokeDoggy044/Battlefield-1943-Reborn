@@ -150,6 +150,8 @@ class RenderTargets {
   bool depth_unorm24_ = true;  // the device has D24_UNORM_S8_UINT depth targets (D103)
   RenderScale scale_, reduced_scale_, shadow_scale_;
   std::map<Key, HostTarget> targets_;
+  std::array<std::pair<Key, HostTarget*>, 8> recent_{};
+  uint32_t recent_next_ = 0;
   std::set<SurfaceTuple> shadow_surfaces_;
   uint64_t frame_ = 0;
 };
