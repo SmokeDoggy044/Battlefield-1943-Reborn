@@ -14,6 +14,7 @@
 #include <rex/math.h>
 
 #include <algorithm>
+#include <bit>
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
@@ -481,8 +482,7 @@ void GuestTextures::RequestTextures(uint32_t used_texture_mask) {
 }
 
 void GuestTextures::UpdateTextureBindingsImpl(uint32_t fetch_constant_mask) {
-  (void)fetch_constant_mask;
-  ++generation_;
+  for (uint32_t mask = fetch_constant_mask; mask; mask &= mask - 1) ++bindings_changed_[std::countr_zero(mask)];
 }
 
 ITextureView* GuestTextures::GetView(uint32_t fetch_constant, xenos::FetchOpDimension dimension, bool is_signed,

@@ -103,10 +103,10 @@ class Textures {
     bool Matches(const rex::graphics::xenos::xe_gpu_texture_fetch_t& f, uint64_t g) const {
       return generation == g && !std::memcmp(fetch.data(), &f, sizeof(fetch));
     }
-    void Keep(const rex::graphics::xenos::xe_gpu_texture_fetch_t& f, uint64_t g, const T& v) {
+    T& Keep(const rex::graphics::xenos::xe_gpu_texture_fetch_t& f, uint64_t g) {
       std::memcpy(fetch.data(), &f, sizeof(fetch));
       generation = g;
-      value = v;
+      return value;
     }
   };
   struct ViewFound {

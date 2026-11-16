@@ -9,6 +9,7 @@
 #include <rex/graphics/pipeline/texture/util.h>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <vector>
 
@@ -120,11 +121,11 @@ ITextureView* Textures::View(uint32_t fetch_constant, const xenos::xe_gpu_textur
                              : dimension == xenos::FetchOpDimension::kCube      ? 2
                                                                                  : 0;
   Kept<ViewFound>& kept = views_[(fetch_constant * 3 + dimension_index) * 2 + uint32_t(is_signed)];
-  if (!kept.Matches(fetch, generation_)) {
-    ViewFound found;
+  const uint64_t generation = generation_ + guest_->generation(fetch_constant);
+  if (!kept.Matches(fetch, generation)) {
+    ViewFound& found = kept.Keep(fetch, generation);
     found.view =
         FindView(fetch, fetch_constant, dimension, is_signed, found.kind, found.guest_read, found.packed_address);
-    kept.Keep(fetch, generation_, found);
   } else if (kept.value.guest_read) {
     resolved_->NoteGuestRead(fetch.base_address << 12);  // counted per fetch, as when it is looked up
   }
@@ -182,7 +183,7 @@ bool Textures::IsResolved(uint32_t fetch_constant, const xenos::xe_gpu_texture_f
   Kept<bool>& kept = resolved_kept_[fetch_constant];
   if (!kept.Matches(fetch, generation_)) {
     ResolvedTexture* texture = resolved_->FindNewest(fetch.base_address << 12, false);
-    kept.Keep(fetch, generation_, texture && texture->ArrayView());
+    kept.Keep(fetch, generation_) = texture && texture->ArrayView();
   }
   return kept.value;
 }
@@ -199,10 +200,10 @@ void Textures::HostSwizzle(uint32_t fetch_constant, const xenos::xe_gpu_texture_
                            uint8_t& signs) {
   Sync();
   Kept<SwizzleFound>& kept = swizzles_[fetch_constant];
-  if (!kept.Matches(fetch, generation_)) {
-    SwizzleFound found;
+  const uint64_t generation = generation_ + guest_->generation(fetch_constant);
+  if (!kept.Matches(fetch, generation)) {
+    SwizzleFound& found = kept.Keep(fetch, generation);
     FindSwizzle(fetch_constant, fetch, found.swizzle, found.signs);
-    kept.Keep(fetch, generation_, found);
   }
   swizzle = kept.value.swizzle;
   signs = kept.value.signs;
@@ -247,16 +248,16 @@ void Textures::FindSwizzle(uint32_t fetch_constant, const xenos::xe_gpu_texture_
 ISampler* Textures::Sampler(const xenos::xe_gpu_texture_fetch_t& fetch,
                             const rex::graphics::SpirvShader::SamplerBinding& binding, float lod_bias) {
   bool point = ReadsPacked(binding.fetch_constant, fetch);
-  std::array<uint32_t, 9> key;
-  std::memcpy(key.data(), &fetch, sizeof(fetch));
-  key[6] = uint32_t(binding.fetch_constant) | uint32_t(binding.mag_filter) << 5 | uint32_t(binding.min_filter) << 7 |
-           uint32_t(binding.mip_filter) << 9 | uint32_t(binding.aniso_filter) << 11 | uint32_t(point) << 14;
-  std::memcpy(&key[7], &lod_bias, sizeof(lod_bias));
-  key[8] = uint32_t(REXCVAR_GET(anisotropic_override));
-  SamplerKept& kept = samplers_kept_[(key[6] * UINT32_C(0x9E3779B1)) >> 25];
-  if (!kept.sampler || kept.key != key) {
+  const uint32_t filters = uint32_t(binding.fetch_constant) | uint32_t(binding.mag_filter) << 5 |
+                           uint32_t(binding.min_filter) << 7 | uint32_t(binding.mip_filter) << 9 |
+                           uint32_t(binding.aniso_filter) << 11 | uint32_t(point) << 14;
+  const uint32_t bias = std::bit_cast<uint32_t>(lod_bias), anisotropy = uint32_t(REXCVAR_GET(anisotropic_override));
+  SamplerKept& kept = samplers_kept_[(filters * UINT32_C(0x9E3779B1)) >> 25];
+  if (!kept.sampler || kept.key[6] != filters || kept.key[7] != bias || kept.key[8] != anisotropy ||
+      std::memcmp(kept.key.data(), &fetch, sizeof(fetch))) {
     kept.sampler = FindSampler(fetch, binding, lod_bias, point);
-    kept.key = key;
+    std::memcpy(kept.key.data(), &fetch, sizeof(fetch));
+    kept.key[6] = filters, kept.key[7] = bias, kept.key[8] = anisotropy;
   }
   return kept.sampler;
 }
@@ -273,7 +274,7 @@ bool Textures::ReadsPacked(uint32_t fetch_constant, const xenos::xe_gpu_texture_
   Kept<bool>& kept = packed_kept_[fetch_constant];
   if (!kept.Matches(fetch, generation_)) {
     ResolvedTexture* texture = resolved_->FindNewest(fetch.base_address << 12, false);
-    kept.Keep(fetch, generation_, texture && ReadsPackedWords(*texture, fetch, false));
+    kept.Keep(fetch, generation_) = texture && ReadsPackedWords(*texture, fetch, false);
   }
   return kept.value;
 }
