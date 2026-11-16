@@ -1869,7 +1869,9 @@ void ExecuteResolve(const Command& c) {
   Blitter::Source kind = source->depth ? (source->samples > 1 ? Blitter::Source::kDepthMsaa : Blitter::Source::kDepth)
                                        : (source->samples > 1 ? Blitter::Source::kColorMsaa : Blitter::Source::kColor);
   if (scaled) kind = source->depth ? Blitter::Source::kDepthScaled : Blitter::Source::kColorScaled;
-  g_blit.Copy(g_device->context(), source->srv, kind, from, target_view, to, options);
+  g_device->recorder().Do([srv = source->srv, kind, from, target_view, to, options](IDeviceContext* context) {
+    g_blit.Copy(context, srv, kind, from, target_view, to, options);
+  });
   // D168 research (NXR_SCOPE_RESEARCH): in a logged frame, where each color resolve went, and four of its pixels there.
   if (g_scope_research_frame && !source->depth && target->texture) {
     REXLOG_INFO("[native_x_renderer] scope research: resolved {}x{} of {} (caller {:08X}) into {:08X}, {}x{} format {}{}",
