@@ -1,0 +1,60 @@
+{
+  "edition": "16 Nov 2026 edition",
+  "status": "",
+  "items": [
+    {
+      "id": "dispatch-welcome",
+      "kind": "news",
+      "kicker": "New in Reborn",
+      "title": "News from the front, at every start",
+      "text": "This window brings you the state of the Reborn servers, what is coming up and our videos. Press B or Esc to close it. The NEWS row on the main menu opens it again at any time.",
+      "date": "2026-11-16",
+      "link": "https://github.com/TekRantGaming/Battlefield-1943-Reborn/releases/latest",
+      "button": "Read the notes",
+      "lead": true
+    },
+    {
+      "id": "reborn-servers",
+      "kind": "news",
+      "kicker": "Servers",
+      "title": "Where to play",
+      "text": "All Maps 1 to 4 and Air Superiority run in Europe, with one more server in US Central. The servers box here shows who is playing right now.",
+      "date": "2026-11-16",
+      "priority": 4
+    },
+    {
+      "id": "discord-community",
+      "kind": "news",
+      "kicker": "Community",
+      "title": "Join us on Discord",
+      "text": "Find a squad, see when the servers fill up and tell us what you find in the playtest.",
+      "date": "2026-11-16",
+      "link": "https://discord.gg/8eakYSvBZS",
+      "button": "Join the Discord",
+      "priority": 3
+    },
+    {
+      "id": "report-an-issue",
+      "kind": "news",
+      "kicker": "Playtest",
+      "title": "Found a bug?",
+      "text": "Use Report an issue on the main menu, or open an issue on GitHub with what you did and what you saw.",
+      "date": "2026-11-16",
+      "link": "https://github.com/TekRantGaming/Battlefield-1943-Reborn/issues",
+      "button": "Open an issue",
+      "priority": 2
+    },
+    {
+      "id": "source-public",
+      "kind": "news",
+      "kicker": "Open source",
+      "title": "Help build Reborn",
+      "text": "The source is public on GitHub. Pull requests go to the in-dev branch and are tested there before a release.",
+      "date": "2026-11-16",
+      "link": "https://github.com/TekRantGaming/Battlefield-1943-Reborn",
+      "button": "Open on GitHub",
+      "priority": 1
+    }
+  ],
+  "upcoming": []
+}
