@@ -888,6 +888,7 @@ class GameMenu final : public rex::ui::ImGuiDialog {
  protected:
   void OnDraw(ImGuiIO& io) override {
     PaceLauncher();
+    FollowScreenRefresh();
     // The keyboard's Esc in a match with our menu closed opens the pause, as the controller's Start does (auto_join.cpp
     // takes it at the next pad read; only with the soldier in the world, as Start).
     if (!open_ && ImGui::IsKeyPressed(ImGuiKey_Escape, false) && !comms::TypingOrJustClosed())
@@ -3240,13 +3241,10 @@ class GameMenu final : public rex::ui::ImGuiDialog {
   // into 30 keep motion even. Every rate and Unlimited, whatever the screen's refresh rate or a limit set outside the
   // game (TekRantGaming, 15 Nov 2026: "unlimited frame rate truly is unlimited frame rate"; from 9 Nov they were held
   // to the screen's rate and to NVIDIA's Max Frame Rate or one measured, frame_cap.cpp, now gone).
-  int ScreenRefresh() {
+  double ScreenRefresh() {
     rex::ui::Window* window = window_ ? window_() : nullptr;
-    if (settings_.Get("fullscreen", "off") == "on")
-      if (auto mode = ParseDisplayMode(settings_.Get("fullscreen_mode", "desktop")); mode && mode->refresh > 0)
-        return int(std::lround(mode->refresh));
-    const DisplayMode desktop = DesktopDisplayMode(std::atoi(settings_.Get("monitor", "0").c_str()), window);
-    return desktop.refresh > 0 ? int(std::lround(desktop.refresh)) : 0;
+    const DisplayMode current = CurrentDisplayMode(window ? 0 : std::atoi(settings_.Get("monitor", "0").c_str()), window);
+    return current.refresh > 0 ? current.refresh : 0;
   }
   std::vector<std::string> OfferedRates() {
     std::vector<std::string> rates;
@@ -3265,13 +3263,25 @@ class GameMenu final : public rex::ui::ImGuiDialog {
       if (r != "unlimited" && std::atoi(r.c_str()) <= want) best = r;
     return best;
   }
+  void FollowScreenRefresh() {
+    const auto now = std::chrono::steady_clock::now();
+    if (now < next_refresh_check_) return;
+    next_refresh_check_ = now + std::chrono::seconds(1);
+    if (std::fabs(ScreenRefresh() - applied_hz_) >= 0.01) ApplyFrameRate();
+  }
   void ApplyFrameRate() {
     const std::string fps = EffectiveFrameRate();
-    SetFrameRate(fps == "unlimited" ? 0.0 : std::atof(fps.c_str()));
-    if (fps != applied_rate_) {
-      REXLOG_INFO("BF frame rate: {} (chosen {}; screen {} Hz)", fps, settings_.Get("frame_rate", DefaultFrameRate()),
-                  ScreenRefresh());
-      applied_rate_ = fps;
+    double rate = fps == "unlimited" ? 0.0 : std::atof(fps.c_str());
+    const double hz = ScreenRefresh();
+    const bool vsync = settings_.Get("vsync", "off") == "on";
+    if (vsync && hz > 0 && (rate <= 0 || rate > hz)) rate = hz;
+    SetFrameRate(rate);
+    applied_hz_ = hz;
+    const std::string applied = rate > 0 ? fmt::format("{:.2f}", rate) : "unlimited";
+    if (applied != applied_rate_) {
+      REXLOG_INFO("BF frame rate: {} (chosen {}; screen {:.2f} Hz{})", applied,
+                  settings_.Get("frame_rate", DefaultFrameRate()), hz, vsync ? ", VSync" : "");
+      applied_rate_ = applied;
     }
   }
 
@@ -3316,7 +3326,7 @@ class GameMenu final : public rex::ui::ImGuiDialog {
                                                 "native_x_renderer_shadow_scale", "native_x_renderer_sharpness",
                                                 "native_x_renderer_scaling", "bf_upscaler_mode", "user_language",
                                                 "native_x_renderer_fill_screen", "bf_render_scale"};
-  static constexpr const char* kStartKeys[] = {"vsync", "monitor", "window_width", "window_height"};
+  static constexpr const char* kStartKeys[] = {"monitor", "window_width", "window_height"};
   std::map<std::string, std::string> started_with_;
   std::string StartValue(const std::string& key) {
     return key.rfind("cvar.", 0) == 0 ? Cvar(key.substr(5)) : settings_.Get(key, "");
@@ -3761,11 +3771,12 @@ class GameMenu final : public rex::ui::ImGuiDialog {
                               "Gamma above change the picture on top of it.",
                               "GstRender", "Brightness", 0.5f));
 
-    SettingRow vsync{"Frame rate", "VSync", "Makes each frame wait for your screen's next refresh. Applies at the next start.",
+    SettingRow vsync{"Frame rate", "VSync", "Makes each frame wait for your screen's next refresh.",
                      {"Off", "On"}, settings_.Get("vsync", "off") == "on" ? 1 : 0};
-    vsync.start_key = "vsync";
     vsync.choose = [this](int i) {
       settings_.values["vsync"] = i ? "on" : "off";
+      rex::cvar::SetFlagByName("native_x_renderer_present_mode", i ? "vsync" : "immediate");
+      ApplyFrameRate();
       settings_.Save();
     };
     rows.push_back(vsync);
@@ -5722,6 +5733,8 @@ class GameMenu final : public rex::ui::ImGuiDialog {
   int name_key_ = 10;
   bool typed_logged_ = false;
   bool accept_from_key_ = false;
+  double applied_hz_ = 0;
+  std::chrono::steady_clock::time_point next_refresh_check_{};
   std::string applied_rate_;        // the frame rate it last applied  // this frame's accept was the keyboard's Enter (MergeInput)
   bool name_caps_ = true;
   Page name_from_ = Page::kHome;

@@ -93,6 +93,10 @@ DisplayMode DesktopDisplayMode(int monitor, const rex::ui::Window* window) {
   return FromSdk(rex::ui::GetDesktopDisplayMode(monitor, window));
 }
 
+DisplayMode CurrentDisplayMode(int monitor, const rex::ui::Window* window) {
+  return FromSdk(rex::ui::GetCurrentDisplayMode(monitor, window));
+}
+
 float HighestRefreshAt(const std::vector<DisplayMode>& modes, int width, int height) {
   float best = 0;
   for (const DisplayMode& m : modes)

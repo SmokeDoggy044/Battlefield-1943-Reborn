@@ -43,6 +43,7 @@ std::vector<DisplayMode> GetFullscreenDisplayModes(int monitor, const Window* wi
 // The display's mode on the desktop (width 0 when unknown). `monitor` as for GetFullscreenDisplayModes.
 // Call on the UI thread.
 DisplayMode GetDesktopDisplayMode(int monitor, const Window* window);
+DisplayMode GetCurrentDisplayMode(int monitor, const Window* window);
 
 // Sets the mode `window` uses whenever it is fullscreen. With a size, the closest mode the display
 // has to width x height at refresh_rate (0: any), as exclusive fullscreen; with width 0, borderless

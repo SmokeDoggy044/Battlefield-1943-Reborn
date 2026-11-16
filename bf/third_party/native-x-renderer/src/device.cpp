@@ -363,6 +363,16 @@ bool Device::RebuildSwapChain(const char* where, const char* what) {
                  where, what ? what : "", rebuilds_);
   }
   vsync_fallback_ = true;
+  if (RemakeSwapChain()) {
+    const auto& desc = swap_chain_->GetDesc();
+    REXLOG_INFO("[native_x_renderer] a new swap chain {}x{} (V-Sync)", desc.Width, desc.Height);
+    return true;
+  }
+  REXLOG_ERROR("[native_x_renderer] no new swap chain could be made on the game window");
+  return false;
+}
+
+bool Device::RemakeSwapChain() {
   // The frame's work submitted (its frame fence signal too, or WaitForFramesInFlight would wait for it forever) and the
   // GPU idle before the swap chain's images go.
   try {
@@ -377,12 +387,9 @@ bool Device::RebuildSwapChain(const char* where, const char* what) {
     if (attempt) std::this_thread::sleep_for(std::chrono::milliseconds(100));
     if (CreateSwapChain()) {
       g_swap_chain_failed.store(false);  // a failed attempt before this one reported itself
-      const auto& desc = swap_chain_->GetDesc();
-      REXLOG_INFO("[native_x_renderer] a new swap chain {}x{} (V-Sync)", desc.Width, desc.Height);
       return true;
     }
   }
-  REXLOG_ERROR("[native_x_renderer] no new swap chain could be made on the game window");
   return false;
 }
 
@@ -483,23 +490,17 @@ std::string Device::WantedPresentMode() const {
 }
 
 void Device::ApplyPresentMode() {
-  // After a swap chain failure (issue 26) the new one keeps its V-Sync: a present mode change makes it again.
-  if (vsync_fallback_) return;
   const std::string mode = WantedPresentMode();
   if (present_mode_applied_ && mode == present_mode_) return;
+  REXLOG_INFO("[native_x_renderer] present mode changed to {}: a new swap chain", PresentModeText(mode));
   present_mode_applied_ = true;
   present_mode_ = mode;
-  RefCntAutoPtr<ISwapChainVk> swap_chain_vk(swap_chain_, IID_SwapChainVk);
-  if (!swap_chain_vk) return;
-  // A change made while playing (a setting, frame generation's V-Sync): the swap chain is made again at the next
-  // Present. The one at the start is made with it already (CreateSwapChain).
-  const std::vector<VkPresentModeKHR> modes = PresentModesFor(mode);
-  swap_chain_vk->SetPresentModes(modes.empty() ? nullptr : modes.data(), Uint32(modes.size()));
-  REXLOG_INFO("[native_x_renderer] present mode: {}", PresentModeText(mode));
+  vsync_fallback_ = false;
+  if (!RemakeSwapChain() && !RebuildSwapChain("changing the present mode", nullptr))
+    throw std::runtime_error("no swap chain");
 }
 
 double Device::Present(double* submit_ms) {
-  ApplyPresentMode();
   context_->EnqueueSignal(frame_fence_, ++frame_);
   static const bool split = [] {
     const char* v = std::getenv("NXR_PRESENT_SPLIT");
@@ -524,6 +525,7 @@ double Device::Present(double* submit_ms) {
     // The frame is lost; the next one goes to the new swap chain.
     if (!RebuildSwapChain("presenting", e.what())) throw;
   }
+  ApplyPresentMode();
   return WaitForFramesInFlight();
 }
 
