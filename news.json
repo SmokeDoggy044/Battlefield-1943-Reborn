@@ -1,26 +1,172 @@
 {
-  "edition": "16 Nov 2026 edition",
+  "edition": "0.4.7 special edition",
   "status": "",
   "items": [
     {
-      "id": "dispatch-welcome",
-      "kind": "news",
-      "kicker": "New in Reborn",
-      "title": "News from the front, at every start",
-      "text": "This window brings you the state of the Reborn servers, what is coming up and our videos. Press B or Esc to close it. The NEWS row on the main menu opens it again at any time.",
+      "id": "trailer-047",
+      "kind": "video",
+      "kicker": "Playtest trailer · 0.4.7",
+      "title": "The biggest Reborn update yet",
+      "text": "Our playtest trailer is here, and so is 0.4.7, now in testing. Stats, leaderboards and achievements, clan tags, team balance, a bug report form, new controls and button prompts, the original menu sounds, Discord status and a lot of performance work. Every card below has the details.",
       "date": "2026-11-16",
-      "link": "https://github.com/TekRantGaming/Battlefield-1943-Reborn/releases/latest",
-      "button": "Read the notes",
+      "youtube": "CfCZ08vNvwc",
+      "link": "https://github.com/TekRantGaming/Battlefield-1943-Reborn/blob/news/notes/0.4.7.md",
+      "button": "Read everything new",
       "lead": true
     },
     {
-      "id": "reborn-servers",
-      "kind": "news",
-      "kicker": "Servers",
-      "title": "Where to play",
-      "text": "All Maps 1 to 4 and Air Superiority run in Europe, with one more server in US Central. The servers box here shows who is playing right now.",
+      "id": "047-stats",
+      "kind": "update",
+      "kicker": "0.4.7 · Stats & Awards",
+      "title": "Your service record",
+      "text": "Kills, flags, headshots, repairs, time in every kit and vehicle and more, counted by the Reborn servers.",
       "date": "2026-11-16",
+      "link": "https://github.com/TekRantGaming/Battlefield-1943-Reborn/blob/news/notes/0.4.7.md#stats-and-awards",
+      "button": "Read more",
+      "priority": 15
+    },
+    {
+      "id": "047-leaderboards",
+      "kind": "update",
+      "kicker": "0.4.7 · Leaderboards",
+      "title": "Leaderboards are back",
+      "text": "Score, Kills, K/D, Flags and Time, for all time, this month and this week, with your own row pinned.",
+      "date": "2026-11-16",
+      "link": "https://github.com/TekRantGaming/Battlefield-1943-Reborn/blob/news/notes/0.4.7.md#leaderboards",
+      "button": "Read more",
+      "priority": 14
+    },
+    {
+      "id": "047-achievements",
+      "kind": "update",
+      "kicker": "0.4.7 · Achievements",
+      "title": "All 12 achievements",
+      "text": "Your progress on each, how many players have it, and a popup with a chime when you unlock one.",
+      "date": "2026-11-16",
+      "link": "https://github.com/TekRantGaming/Battlefield-1943-Reborn/blob/news/notes/0.4.7.md#achievements",
+      "button": "Read more",
+      "priority": 13
+    },
+    {
+      "id": "047-clan-tags",
+      "kind": "update",
+      "kicker": "0.4.7 · Clan tags",
+      "title": "Wear your [TAG]",
+      "text": "2 to 4 letters or digits before your name, set on your name page with RB or F4.",
+      "date": "2026-11-16",
+      "link": "https://github.com/TekRantGaming/Battlefield-1943-Reborn/blob/news/notes/0.4.7.md#clan-tags",
+      "button": "Read more",
+      "priority": 12
+    },
+    {
+      "id": "047-protect-name",
+      "kind": "update",
+      "kicker": "0.4.7 · Accounts",
+      "title": "Protect your name",
+      "text": "Keep your name, rank and stats with a recovery code. No email and no password.",
+      "date": "2026-11-16",
+      "link": "https://github.com/TekRantGaming/Battlefield-1943-Reborn/blob/news/notes/0.4.7.md#protect-your-name",
+      "button": "Read more",
+      "priority": 11
+    },
+    {
+      "id": "047-team-balance",
+      "kind": "update",
+      "kicker": "0.4.7 · Team balance",
+      "title": "Even teams, no penalty",
+      "text": "Lopsided teams are evened out on Reborn servers, one player at a time, with no points lost.",
+      "date": "2026-11-16",
+      "link": "https://github.com/TekRantGaming/Battlefield-1943-Reborn/blob/news/notes/0.4.7.md#team-balance",
+      "button": "Read more",
+      "priority": 10
+    },
+    {
+      "id": "047-report-issue",
+      "kind": "update",
+      "kicker": "0.4.7 · Report an issue",
+      "title": "Report bugs from the game",
+      "text": "A three step form on the main menu. You see everything that is sent, and no GitHub account is needed.",
+      "date": "2026-11-16",
+      "link": "https://github.com/TekRantGaming/Battlefield-1943-Reborn/blob/news/notes/0.4.7.md#report-an-issue",
+      "button": "Read more",
+      "priority": 9
+    },
+    {
+      "id": "047-controls",
+      "kind": "update",
+      "kicker": "0.4.7 · Controls",
+      "title": "Controls by device",
+      "text": "Pick keyboard and mouse or controller, and see only the settings and bindings for it.",
+      "date": "2026-11-16",
+      "link": "https://github.com/TekRantGaming/Battlefield-1943-Reborn/blob/news/notes/0.4.7.md#controls-by-device",
+      "button": "Read more",
+      "priority": 8
+    },
+    {
+      "id": "047-prompts-sounds",
+      "kind": "update",
+      "kicker": "0.4.7 · Menus",
+      "title": "New prompts, original sounds",
+      "text": "Kenney's button prompts for every pad and the keyboard, and the original menus' sounds from your game files.",
+      "date": "2026-11-16",
+      "link": "https://github.com/TekRantGaming/Battlefield-1943-Reborn/blob/news/notes/0.4.7.md#button-prompts-and-menu-sounds",
+      "button": "Read more",
+      "priority": 7
+    },
+    {
+      "id": "047-discord",
+      "kind": "update",
+      "kicker": "0.4.7 · Discord",
+      "title": "Your match on Discord",
+      "text": "Your Discord profile shows the map, team, server and match time. Never an address or another name.",
+      "date": "2026-11-16",
+      "link": "https://github.com/TekRantGaming/Battlefield-1943-Reborn/blob/news/notes/0.4.7.md#discord-status",
+      "button": "Read more",
+      "priority": 6
+    },
+    {
+      "id": "047-performance",
+      "kind": "update",
+      "kicker": "0.4.7 · Performance",
+      "title": "Faster and lighter",
+      "text": "About 340 MB less graphics memory, true unlimited frame rate and smoother play on PCs with few cores.",
+      "date": "2026-11-16",
+      "link": "https://github.com/TekRantGaming/Battlefield-1943-Reborn/blob/news/notes/0.4.7.md#performance-and-memory",
+      "button": "Read more",
+      "priority": 5
+    },
+    {
+      "id": "047-linux",
+      "kind": "update",
+      "kicker": "0.4.7 · Linux and Steam Deck",
+      "title": "Runs on more Linux",
+      "text": "The AppImage now starts on Ubuntu 22.04, Linux Mint 21, Debian 12 and newer, with Wayland at full size.",
+      "date": "2026-11-16",
+      "link": "https://github.com/TekRantGaming/Battlefield-1943-Reborn/blob/news/notes/0.4.7.md#linux-and-steam-deck",
+      "button": "Read more",
       "priority": 4
+    },
+    {
+      "id": "047-servers",
+      "kind": "update",
+      "kicker": "0.4.7 · Servers",
+      "title": "Steadier servers",
+      "text": "Maintenance notices, clean refusals on full servers, fewer server crashes and a true 60 Hz on Linux.",
+      "date": "2026-11-16",
+      "link": "https://github.com/TekRantGaming/Battlefield-1943-Reborn/blob/news/notes/0.4.7.md#servers",
+      "button": "Read more",
+      "priority": 3
+    },
+    {
+      "id": "047-thanks",
+      "kind": "news",
+      "kicker": "0.4.7 · Thanks",
+      "title": "Built with the community",
+      "text": "DiXN, Erubadhron, ThatZaliaSGuy and Kenney all have work in this update. Thank you.",
+      "date": "2026-11-16",
+      "link": "https://github.com/TekRantGaming/Battlefield-1943-Reborn/blob/news/notes/0.4.7.md#thanks",
+      "button": "Read more",
+      "priority": 2
     },
     {
       "id": "discord-community",
@@ -31,30 +177,12 @@
       "date": "2026-11-16",
       "link": "https://discord.gg/8eakYSvBZS",
       "button": "Join the Discord",
-      "priority": 3
-    },
-    {
-      "id": "report-an-issue",
-      "kind": "news",
-      "kicker": "Playtest",
-      "title": "Found a bug?",
-      "text": "Use Report an issue on the main menu, or open an issue on GitHub with what you did and what you saw.",
-      "date": "2026-11-16",
-      "link": "https://github.com/TekRantGaming/Battlefield-1943-Reborn/issues",
-      "button": "Open an issue",
-      "priority": 2
-    },
-    {
-      "id": "source-public",
-      "kind": "news",
-      "kicker": "Open source",
-      "title": "Help build Reborn",
-      "text": "The source is public on GitHub. Pull requests go to the in-dev branch and are tested there before a release.",
-      "date": "2026-11-16",
-      "link": "https://github.com/TekRantGaming/Battlefield-1943-Reborn",
-      "button": "Open on GitHub",
       "priority": 1
     }
   ],
-  "upcoming": []
+  "upcoming": [
+    { "label": "Now", "text": "0.4.7 in testing" },
+    { "label": "Soon", "text": "0.4.7 for everyone" },
+    { "label": "Later", "text": "Sky and weather" }
+  ]
 }
