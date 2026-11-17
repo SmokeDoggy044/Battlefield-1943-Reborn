@@ -391,6 +391,7 @@ const TrackedCall* StateTracker::TakeCommittedInlineDraw(const uint8_t* base) {
     }
     return nullptr;
   }
+  if (sync_) sync_(*this);
   last_.call = Call::kEndVertices;
   return &last_;
 }
@@ -427,6 +428,7 @@ const TrackedCall* StateTracker::Leave(Call call, const uint8_t* base, bool nest
   // A setter that only wrote the shadow (D72): nothing to read or apply. One that moved to another segment wrote
   // packets (begin != scan_from).
   if (skip_empty_calls_ && !draw && end == p.begin && p.scan_from == p.begin && initialized_) return nullptr;
+  if (sync_) sync_(*this);
   if (end >= p.scan_from && end - p.scan_from < 0x400000) {
     ScanPackets(base, p.scan_from, end, scan_, Collect{scan_}, 0, draw, false);
   } else {
@@ -535,6 +537,7 @@ struct StateTracker::Direct {
 const TrackedCall* StateTracker::LeaveReplay(Call call, const uint8_t* base, bool nested,
                                              const std::function<void(const TrackedCall&)>& on_draw) {
   if (nested || stack_.empty() || stack_.back().kick || !stack_.back().active) return Leave(call, base, nested);
+  if (sync_) sync_(*this);
   Pending p = std::move(stack_.back());
   stack_.pop_back();
   const DeviceLayout& d = profile_.device;
@@ -550,7 +553,7 @@ const TrackedCall* StateTracker::LeaveReplay(Call call, const uint8_t* base, boo
   // Each draw: the packets before it (since the last draw) applied as a call that is not a draw, then the draw.
   Gather(p, call, false, base);
   scan_.Clear();
-  TrackedCall draw_call{call, true, p.device, 0, 0, &scan_, true};
+  TrackedCall draw_call{.call = call, .draw = true, .device = p.device, .scan = &scan_, .replayed = true};
   uint64_t draws = 0;
   DrawFound found = [&](uint32_t packet, uint32_t packet_end) {
     Gather(p, call, false, base);
@@ -565,6 +568,78 @@ const TrackedCall* StateTracker::LeaveReplay(Call call, const uint8_t* base, boo
   Gather(p, call, false, base);
   last_ = {call, false, p.device, GpuAddress(p.begin), GpuAddress(end), &scan_};
   return &last_;
+}
+
+bool StateTracker::TakeReplay(Call call, const uint8_t* base, ReplayJob& job) {
+  if (stack_.empty() || stack_.back().kick || !stack_.back().active || !initialized_ || apply_locally_) return false;
+  const Pending& p = stack_.back();
+  const uint32_t end = Load32(base, p.device + profile_.device.command_buffer_write) + 4;
+  if (p.scan_from != p.begin || end < p.scan_from || end - p.scan_from >= 0x400000) return false;
+  job.call = call;
+  job.device = p.device;
+  job.scan_from = p.scan_from;
+  job.end = end;
+  TakeRecord(job.record);
+  stack_.pop_back();
+  g_replay_calls.fetch_add(1, std::memory_order_relaxed);
+  return true;
+}
+
+void StateTracker::RunReplay(ReplayJob& job, const uint8_t* base) {
+  initialized_ = true;
+  known_.assign((rex::graphics::RegisterFile::kRegisterCount + 63) / 64, 0);
+  fetch_overridden_ = {};
+  programs_ = {};
+  std::swap(record_.data, job.record);
+  record_.values_at_ = SIZE_MAX;
+  scan_.Clear();
+  Pending p;
+  p.device = job.device;
+  job.draw_count = 0;
+  DrawFound found = [&](uint32_t packet, uint32_t) {
+    Gather(p, job.call, false, base);
+    if (job.draw_count == job.draws.size()) job.draws.emplace_back();
+    ReplayDraw& draw = job.draws[job.draw_count++];
+    TakeRecord(draw.record);
+    draw.begin = GpuAddress(packet);
+    draw.programs[0] = programs_[0];
+    draw.programs[1] = programs_[1];
+    scan_.Clear();
+  };
+  ScanPackets(base, job.scan_from, job.end, scan_, Direct{*this}, 0, false, false, &found);
+  Gather(p, job.call, false, base);
+  TakeRecord(job.record);
+  g_replay_draws.fetch_add(job.draw_count, std::memory_order_relaxed);
+}
+
+void StateTracker::MergeReplay(const StateTracker& worker) {
+  for (size_t word = 0; word < worker.known_.size(); ++word) {
+    for (uint64_t bits = worker.known_[word]; bits; bits &= bits - 1) {
+      const size_t reg = 64 * word + size_t(std::countr_zero(bits));
+      image_[reg] = worker.image_[reg];
+    }
+  }
+  for (uint32_t word = 0; word < 3; ++word) {
+    for (uint64_t bits = worker.fetch_overridden_[word]; bits; bits &= bits - 1) {
+      const uint32_t i = 64 * word + uint32_t(std::countr_zero(bits));
+      fetch_override_[i] = worker.fetch_override_[i];
+      SetOverridden(i, true);
+    }
+  }
+  for (int i = 0; i < 2; ++i) {
+    if (worker.programs_[i]) programs_[i] = worker.programs_[i];
+  }
+}
+
+bool StateTracker::Known(uint32_t first, uint32_t count) {
+  if (known_.empty()) return true;
+  bool all = true;
+  for (uint32_t reg = first; reg < first + count; ++reg) {
+    const uint64_t bit = uint64_t(1) << (reg & 63);
+    all &= (known_[reg >> 6] & bit) != 0;
+    known_[reg >> 6] |= bit;
+  }
+  return all;
 }
 
 void ApplyRecord(const uint32_t* record, size_t size, uint32_t* registers) {
@@ -598,7 +673,7 @@ void StateTracker::Send(uint32_t first_register, const uint8_t* source, uint32_t
   auto same = [&](uint32_t i, uint32_t n) {
     uint32_t difference = 0;
     for (uint32_t k = 0; k < n; ++k) difference |= src[i + k] ^ image[i + k];
-    return difference == 0;
+    return Known(first_register + i, n) && difference == 0;
   };
   for (uint32_t i = 0; i < count;) {
     uint32_t n = std::min(16u, count - i);
@@ -618,7 +693,7 @@ void StateTracker::Send(uint32_t first_register, const uint8_t* source, uint32_t
 
 void StateTracker::SendValue(uint32_t reg, uint32_t value) {
   uint32_t big_endian = std::byteswap(value);
-  if (image_[reg] == big_endian) return;
+  if (Known(reg) && image_[reg] == big_endian) return;
   image_[reg] = big_endian;
   record_.Value(reg, value);
 }

@@ -28,14 +28,6 @@ namespace {
 
 using Clock = std::chrono::steady_clock;
 
-void Pause() {
-#if defined(_M_X64) || defined(__x86_64__)
-  _mm_pause();
-#else
-  std::this_thread::yield();
-#endif
-}
-
 // Waits on a condition variable are bounded: a missed wake-up costs at most this long.
 constexpr auto kWaitSlice = std::chrono::milliseconds(5);
 

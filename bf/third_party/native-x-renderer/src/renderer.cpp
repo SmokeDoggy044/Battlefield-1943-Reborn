@@ -50,6 +50,7 @@
 #include <rex/ppc/context.h>
 #include <rex/system/interfaces/graphics.h>
 #include <rex/system/kernel_state.h>
+#include <rex/thread.h>
 #include <rex/ui/window.h>
 #if !defined(_WIN32)
 #include <SDL3/SDL.h>
@@ -81,6 +82,8 @@
 #include <x86intrin.h>
 #endif
 
+REXCVAR_DEFINE_INT32(native_x_renderer_replay_threads, 3, "NativeXRenderer",
+                     "Threads that read recorded command buffer runs in parallel; 0 reads them on the game's thread");
 REXCVAR_DEFINE_BOOL(native_x_renderer_replay_recorded_targets, false, "NativeXRenderer",
                     "Draws replayed from recorded command buffers render into the targets the recording device had "
                     "bound (D129) instead of the running device's (D131); for diagnosis");
@@ -2711,10 +2714,79 @@ void Execute(Command& c);
 // Capturing, on the game's render thread (D71): what each call needs from guest memory and the tracker, read
 // before the call returns to the game.
 
+enum ReplayState : uint32_t { kReplayIdle, kReplayQueued, kReplayRunning };
+struct ReplaySlot {
+  explicit ReplaySlot(const Profile& profile) : tracker(profile) {}
+  StateTracker tracker;
+  StateTracker::ReplayJob job;
+  std::array<GuestSurface, 5> bound{};
+  std::atomic<uint64_t> seq{0};
+  std::atomic<uint32_t> state{kReplayIdle}, pending{0};
+  std::atomic<bool> credited{false};
+};
+std::vector<ReplaySlot*> g_replay_slots;
+std::atomic<uint64_t> g_replays_dispatched{0}, g_replays_enqueued{0};
+std::atomic<uint32_t> g_replay_burst{0}, g_replay_sleepers{0}, g_replay_wake{0};
+std::mutex g_replay_mutex;
+std::condition_variable g_replay_cv;
+std::vector<uint32_t> g_replay_carry;
+const StateTracker::Program* g_replay_programs[2] = {};
+const uint8_t* g_replay_base = nullptr;
+thread_local bool t_replay_enqueuing = false;
+
+void EnqueueReplay(ReplaySlot& s);
+
+bool CreditReplay(ReplaySlot& s) {
+  return !s.credited.exchange(true) && s.pending.fetch_sub(1) == 1;
+}
+
+void FinishReplay(uint32_t i) {
+  if (g_replay_slots[i]->pending.fetch_sub(1) != 1) return;
+  t_replay_enqueuing = true;
+  for (;;) {
+    ReplaySlot& s = *g_replay_slots[i];
+    const uint64_t seq = s.seq.load();
+    EnqueueReplay(s);
+    s.state.store(kReplayIdle);
+    g_replays_enqueued.store(seq);
+    if (++i >= g_replay_burst.load() || g_replay_slots[i]->seq.load() != seq + 1 || !CreditReplay(*g_replay_slots[i])) break;
+  }
+  t_replay_enqueuing = false;
+}
+
+bool RunOneReplay() {
+  const uint32_t burst = g_replay_burst.load();
+  for (uint32_t i = 0; i < burst; ++i) {
+    ReplaySlot& s = *g_replay_slots[i];
+    uint32_t queued = kReplayQueued;
+    if (!s.state.compare_exchange_strong(queued, kReplayRunning)) continue;
+    s.tracker.RunReplay(s.job, g_replay_base);
+    FinishReplay(i);
+    return true;
+  }
+  return false;
+}
+
+std::mutex& WaitReplays() {
+  if (!t_replay_enqueuing) {
+    const uint64_t target = g_replays_dispatched.load();
+    const bool spin = SpinWaitsAllowed();
+    while (g_replays_enqueued.load() < target) {
+      if (RunOneReplay()) continue;
+      if (spin) {
+        Pause();
+      } else {
+        std::this_thread::yield();
+      }
+    }
+  }
+  return g_capture_mutex;
+}
+
 // One command: filled, then published when it goes out of scope.
 class Capture {
  public:
-  explicit Capture(Command::Type type) : lock_(g_capture_mutex), command(g_queue.Next()) {
+  explicit Capture(Command::Type type) : lock_(WaitReplays()), command(g_queue.Next()) {
     command.type = type;
     ++g_captured;
   }
@@ -2776,45 +2848,108 @@ void CaptureInlineData(const StateTracker& tracker, const uint8_t* base, Command
   }
 }
 
+// A draw replayed from a recorded command buffer renders into the surfaces bound on the device that runs the
+// buffer, as on the console, where the buffer holds draws and their state but not the render targets (D131). Only
+// when that device has none bound, the ones the recording device had (D129's snapshot).
+void UseRecordedSurfaces(const TrackedCall& tracked, std::array<GuestSurface, 5>& surfaces) {
+  if (!tracked.replayed) return;
+  const bool recorded_targets = REXCVAR_GET(native_x_renderer_replay_recorded_targets);
+  for (const GuestSurface& s : surfaces) {
+    if (s.object && !recorded_targets) return;
+  }
+  std::array<SurfaceSnapshot, 5> recorded;
+  if (!FindRecordedDraw(tracked.begin, recorded)) return;
+  // The surfaces the recording device had bound for it.
+  for (uint32_t i = 0; i < 5; ++i) {
+    const SurfaceSnapshot& r = recorded[i];
+    GuestSurface& s = surfaces[i];
+    s = {};
+    if (!r.object) continue;
+    s.object = r.object;
+    s.surface_info = r.surface_info;
+    s.info = r.info;
+    s.width = r.width;
+    s.height = r.height;
+    s.depth = i == 4;
+  }
+}
+
 void CaptureDraw(const TrackedCall& tracked, StateTracker& tracker, const uint8_t* base) {
   Capture capture(Command::Type::kDraw);
   Command& c = capture.command;
   c.call = tracked.call;
   tracker.TakeRecord(c.registers);
-  // A draw replayed from a recorded command buffer renders into the surfaces bound on the device that runs the
-  // buffer, as on the console, where the buffer holds draws and their state but not the render targets (D131). Only
-  // when that device has none bound, the ones the recording device had (D129's snapshot).
-  const bool recorded_targets = tracked.replayed && REXCVAR_GET(native_x_renderer_replay_recorded_targets);
-  bool bound = false;
-  if (!recorded_targets) {
-    for (uint32_t i = 0; i < 5; ++i) {
-      c.surfaces[i] = ReadBoundSurface(base, tracked.device, i);
-      bound |= c.surfaces[i].object != 0;
-    }
-  }
-  std::array<SurfaceSnapshot, 5> recorded;
-  if (tracked.replayed && !bound && FindRecordedDraw(tracked.begin, recorded)) {
-    // The surfaces the recording device had bound for it.
-    for (uint32_t i = 0; i < 5; ++i) {
-      const SurfaceSnapshot& r = recorded[i];
-      GuestSurface& s = c.surfaces[i];
-      s = {};
-      if (!r.object) continue;
-      s.object = r.object;
-      s.surface_info = r.surface_info;
-      s.info = r.info;
-      s.width = r.width;
-      s.height = r.height;
-      s.depth = i == 4;
-    }
-  } else if (recorded_targets) {
-    for (uint32_t i = 0; i < 5; ++i) c.surfaces[i] = ReadBoundSurface(base, tracked.device, i);
-  }
+  for (uint32_t i = 0; i < 5; ++i) c.surfaces[i] = ReadBoundSurface(base, tracked.device, i);
+  UseRecordedSurfaces(tracked, c.surfaces);
   c.programs[0] = tracker.vertex_program_ptr();
   c.programs[1] = tracker.pixel_program_ptr();
   if ((Info(tracked.call).flags & kInlineEnd) || tracked.call == Call::kDrawVerticesUP) {
     CaptureInlineData(tracker, base, c);
   }
+}
+
+void EnqueueReplay(ReplaySlot& w) {
+  StateTracker::ReplayJob& job = w.job;
+  TrackedCall draw{.call = job.call, .draw = true, .device = job.device, .replayed = true};
+  for (size_t i = 0; i < job.draw_count; ++i) {
+    StateTracker::ReplayDraw& d = job.draws[i];
+    d.record.insert(d.record.begin(), g_replay_carry.begin(), g_replay_carry.end());
+    g_replay_carry.clear();
+    for (int t = 0; t < 2; ++t) g_replay_programs[t] = d.programs[t] ? d.programs[t] : g_replay_programs[t];
+    draw.begin = d.begin;
+    Capture capture(Command::Type::kDraw);
+    Command& c = capture.command;
+    c.call = job.call;
+    std::swap(c.registers, d.record);
+    c.surfaces = w.bound;
+    UseRecordedSurfaces(draw, c.surfaces);
+    c.programs[0] = g_replay_programs[0];
+    c.programs[1] = g_replay_programs[1];
+  }
+  g_replay_carry.insert(g_replay_carry.end(), job.record.begin(), job.record.end());
+  if (w.tracker.vertex_program_ptr()) g_replay_programs[0] = w.tracker.vertex_program_ptr();
+  if (w.tracker.pixel_program_ptr()) g_replay_programs[1] = w.tracker.pixel_program_ptr();
+}
+
+bool ReplayQueued() {
+  const uint32_t burst = g_replay_burst.load();
+  for (uint32_t i = 0; i < burst; ++i) {
+    if (g_replay_slots[i]->state.load() == kReplayQueued) return true;
+  }
+  return false;
+}
+
+void RunReplayWorker() {
+  rex::thread::set_current_thread_name("NXRReplay");
+  for (;;) {
+    const uint32_t wake = g_replay_wake.load();
+    for (uint32_t i = 0; SpinWaitsAllowed() && i < 4096 && !ReplayQueued(); ++i) Pause();
+    if (RunOneReplay()) continue;
+    std::unique_lock lock(g_replay_mutex);
+    g_replay_sleepers.fetch_add(1);
+    g_replay_cv.wait_for(lock, std::chrono::milliseconds(5), [&] { return ReplayQueued() || g_replay_wake.load() != wake; });
+    g_replay_sleepers.fetch_sub(1);
+  }
+}
+
+void WakeReplayWorkers(bool all) {
+  if (!g_replay_sleepers.load()) return;
+  std::lock_guard lock(g_replay_mutex);
+  if (all) {
+    g_replay_wake.fetch_add(1);
+    g_replay_cv.notify_all();
+  } else {
+    g_replay_cv.notify_one();
+  }
+}
+
+void SyncReplays(StateTracker& tracker) {
+  const uint32_t burst = g_replay_burst.load();
+  if (!burst) return;
+  WaitReplays();
+  for (uint32_t i = 0; i < burst; ++i) tracker.MergeReplay(g_replay_slots[i]->tracker);
+  tracker.GiveRecord(g_replay_carry);
+  g_replay_burst.store(0);
 }
 
 void CaptureResolve(const uint8_t* base, const Arguments& a, const PacketScan& scan) {
@@ -3361,7 +3496,13 @@ bool Initialize(const Profile& profile, rex::system::IGraphicsSystem* graphics, 
           if (raise_gate && !raised) raised = true, RaiseCurrentThreadPriority();
           g_queue.WaitIdle(tag);
         },
-        nullptr, [](void*) { return g_queue.Produced(); });
+        nullptr, [](void*) {
+          WaitReplays();
+          return g_queue.Produced();
+        });
+    const int32_t replay_threads = REXCVAR_GET(native_x_renderer_replay_threads);
+    for (int32_t i = 0; replay_threads > 0 && i <= replay_threads; ++i) g_replay_slots.push_back(new ReplaySlot(*g_profile));
+    for (int32_t i = 0; i < replay_threads; ++i) std::thread(RunReplayWorker).detach();
     std::atexit([] {
       g_queue.Stop();
       if (g_device) g_device->recorder().Stop();
@@ -3391,6 +3532,7 @@ void OnEnter(Call call, PPCContext& ctx, uint8_t* base, bool nested) {
     return;
   }
   if (nested) return;
+  if ((Info(call).flags & kReplay) && !g_replay_burst.load()) WakeReplayWorkers(true);
   // The arguments of the calls the renderer acts on; the setters' are not needed (D72).
   switch (call) {
     case Call::kResolve:
@@ -3443,6 +3585,31 @@ void OnLeave(const TrackedCall& tracked, StateTracker& tracker, PPCContext& ctx,
     default:
       break;  // the call's state is in the tracker; nothing to do here
   }
+}
+
+bool DispatchReplay(Call call, StateTracker& tracker, const uint8_t* base) {
+  if (g_replay_slots.empty()) return false;
+  tracker.set_sync(&SyncReplays);
+  if (g_replay_burst.load() == g_replay_slots.size()) SyncReplays(tracker);
+  const uint32_t i = g_replay_burst.load();
+  ReplaySlot& s = *g_replay_slots[i];
+  if (!tracker.TakeReplay(call, base, s.job)) return false;
+  if (!i) {
+    g_replay_programs[0] = tracker.vertex_program_ptr();
+    g_replay_programs[1] = tracker.pixel_program_ptr();
+  }
+  g_replay_base = base;
+  for (uint32_t k = 0; k < 5; ++k) s.bound[k] = ReadBoundSurface(base, s.job.device, k);
+  const uint64_t seq = g_replays_dispatched.load() + 1;
+  s.seq.store(seq);
+  s.pending.store(i ? 2 : 1);
+  s.credited.store(i == 0);
+  s.state.store(kReplayQueued);
+  g_replay_burst.store(i + 1);
+  g_replays_dispatched.store(seq);
+  if (i && g_replays_enqueued.load() >= seq - 1) CreditReplay(s);
+  WakeReplayWorkers(false);
+  return true;
 }
 
 void OnFrameEnd(uint32_t frame) {

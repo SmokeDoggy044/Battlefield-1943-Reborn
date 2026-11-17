@@ -243,6 +243,28 @@ class StateTracker {
   const Program* pixel_program_ptr() const { return programs_[1]; }
   static const Program kNoProgram;
 
+  struct ReplayDraw {
+    std::vector<uint32_t> record;
+    uint32_t begin = 0;
+    const Program* programs[2] = {};
+  };
+  struct ReplayJob {
+    Call call{};
+    uint32_t device = 0, scan_from = 0, end = 0;
+    std::vector<uint32_t> record;
+    std::vector<ReplayDraw> draws;
+    size_t draw_count = 0;
+  };
+  bool TakeReplay(Call call, const uint8_t* base, ReplayJob& job);
+  void RunReplay(ReplayJob& job, const uint8_t* base);
+  void MergeReplay(const StateTracker& worker);
+  void GiveRecord(std::vector<uint32_t>& from) {
+    record_.data.insert(record_.data.begin(), from.begin(), from.end());
+    record_.values_at_ = SIZE_MAX;
+    from.clear();
+  }
+  void set_sync(void (*sync)(StateTracker&)) { sync_ = sync; }
+
  private:
   struct Pending {
     bool active = false;  // an outermost device call being tracked
@@ -265,6 +287,7 @@ class StateTracker {
   // Into record_: a value written by a packet, if it differs from image_.
   void SendValue(uint32_t reg, uint32_t value);
   struct Direct;
+  bool Known(uint32_t first, uint32_t count = 1);
   // The fetch constant dwords packets wrote outside the flush (fetch_override_), as bits: dword i is bit i % 64
   // of word i / 64.
   void SetOverridden(uint32_t dword, bool on) {
@@ -311,6 +334,8 @@ class StateTracker {
   } inline_begin_;
   PacketScan scan_;
   TrackedCall last_;
+  std::vector<uint64_t> known_;
+  void (*sync_)(StateTracker&) = nullptr;
 };
 
 }  // namespace native_x_renderer

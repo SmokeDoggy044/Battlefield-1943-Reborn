@@ -309,10 +309,13 @@ void Leave(Call call, PPCContext& ctx, uint8_t* base) {
   }
   if (g_tracker && t_tracked && (internal::Info(call).flags & internal::kReplay) && !nested) {
     // A recorded command buffer run: each recorded draw goes on as a draw of its own, in order, then the call.
-    const TrackedCall* tracked = g_tracker->LeaveReplay(call, base, nested, [&](const TrackedCall& draw) {
-      if (g_observer) observer::OnLeave(draw, *g_tracker);
-      if (g_renderer) renderer::OnLeave(draw, *g_tracker, ctx, base);
-    });
+    const TrackedCall* tracked =
+        g_renderer && !g_observer && renderer::DispatchReplay(call, *g_tracker, base)
+            ? nullptr
+            : g_tracker->LeaveReplay(call, base, nested, [&](const TrackedCall& draw) {
+                if (g_observer) observer::OnLeave(draw, *g_tracker);
+                if (g_renderer) renderer::OnLeave(draw, *g_tracker, ctx, base);
+              });
     if (tracked) {
       if (g_observer) observer::OnLeave(*tracked, *g_tracker);
       if (g_renderer) renderer::OnLeave(*tracked, *g_tracker, ctx, base);
