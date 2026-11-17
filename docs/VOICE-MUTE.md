@@ -84,3 +84,6 @@ The mutes themselves are only in `muted-players.txt` (delete a line, or the file
   unmuted, muted and unmuted peer2; the prompt reads "F MUTE / UNMUTE".
 - **pz1**: our pause's Scoreboard: X (controller) muted two players, F (keyboard) unmuted one; prompts X MUTE and the
   F key, no mute prompt on your own row. **p720**: clicks on another player's speaker there unmuted, muted and muted.
+- **eor2**: the end of round screen with keyboard and mouse and keyboard prompts in a real 1280 x 720 window (this PC
+  runs at 250%, so --window_width=512 --window_height=288): "F MUTE / UNMUTE", "R NEXT INFO SCREEN"; F muted peer2 in
+  the match, then unmuted and muted it on the end screen; the speakers and the slash read at 720p as at 3200 x 1800.
