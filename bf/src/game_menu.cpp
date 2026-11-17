@@ -1062,6 +1062,7 @@ class GameMenu final : public rex::ui::ImGuiDialog {
       auto_joined_ = true, QuickJoin();
     PrivateMatchTick();  // our Create Private Match: its server's state, the join, its end
     TickRejoinTick();    // the join asked for before a restart at the server's tick rate
+    CountedAchievementsTick();  // an achievement whose counted progress is complete (issue 37)
     OwnBackendLeaveTick();  // a LAN match is over: back on the main servers
     HostLanAtStartTick();   // a LAN match asked for before a restart
     // The server list is wanted (server_list.h Want) by a match being played and the friends page here; the browser

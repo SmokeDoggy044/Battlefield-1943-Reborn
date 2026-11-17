@@ -236,6 +236,27 @@
     }
     return rows;
   }
+  // An achievement whose counted progress is complete, unlocked (issue 37, 17 Nov 2026: Attacker at 5 of 5 on this
+  // page and still locked). The page counts from our servers' stats and this PC's own score events, but only the
+  // game's own code unlocked anything, and it never sees progress from before 0.4.7 or from another PC. The game's
+  // words for the nine counted ones are lifetime totals ("Capture five flags", "Play 30 matches"), as ours are. Every
+  // 10 s while a menu is open (a match ends in one), once the game's list is in; with its popup, as the game's own.
+  double counted_checked_at_ = -100;
+  void CountedAchievementsTick() {
+    if (test_profile_active_ || ImGui::GetTime() - counted_checked_at_ < 10) return;
+    counted_checked_at_ = ImGui::GetTime();
+    auto* k = REX_KERNEL_STATE();
+    if (!k || k->achievements().ListAchievements().empty()) return;
+    bool from_servers = false;
+    const ProgCard c = MyRecord(from_servers);
+    for (const AchRow& r : AchievementRows(c)) {
+      if (r.got || r.need <= 0 || r.have < r.need) continue;
+      const auto result = k->achievements().UnlockAchievement(r.info.id, rex::system::AchievementNotification::kShow);
+      REXLOG_INFO("BF achievements: {} unlocked from its counted progress ({} of {}{}): {}", r.info.label, r.have,
+                  r.need, from_servers ? ", the servers' record" : ", this PC's own",
+                  result == rex::system::AchievementUnlockResult::kUnlocked ? "done" : "not taken");
+    }
+  }
   static std::string WhenText(uint64_t filetime) {
     if (filetime < 116444736000000000ULL) return {};
     const std::time_t t = std::time_t((filetime - 116444736000000000ULL) / 10000000ULL);
