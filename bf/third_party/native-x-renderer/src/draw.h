@@ -67,6 +67,16 @@ void RecordAttachedCameraMove(const float* position, const float* move, const fl
 
 class Blitter;
 
+struct BufferUploads {
+  struct Upload {
+    Diligent::IBuffer* buffer;
+    uint64_t size;
+    uint8_t* data;
+  };
+  std::array<Upload, 6> list{};
+  uint32_t count = 0;
+};
+
 class DrawPath {
  public:
   DrawPath();
@@ -448,6 +458,7 @@ class DrawPath {
   // D154: a draw of a model placed from another camera moved onto the frame's (in the mapped constants).
   void MoveAttached(const uint32_t* regs, uint32_t first, const uint64_t* float_bitmap, uint8_t* mapped);
   void MoveWeaponLayer(const uint32_t* regs, uint32_t first, const uint64_t* float_bitmap, uint8_t* mapped);
+  BufferUploads uploads_;
   uint64_t attached_moved_ = 0, attached_seen_ = 0;  // since the last log
   Blitter* blit_ = nullptr;  // D155
   double tick_why_[8] = {};
