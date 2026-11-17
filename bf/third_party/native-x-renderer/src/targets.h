@@ -152,6 +152,15 @@ class RenderTargets {
   std::map<Key, HostTarget> targets_;
   std::array<std::pair<Key, HostTarget*>, 8> recent_{};
   uint32_t recent_next_ = 0;
+  struct ColorRun {
+    uint32_t base = 0, pitch = 0;
+    Kind kind{};
+    uint64_t generation = 0;
+    std::vector<HostTarget*> targets;
+  };
+  std::array<ColorRun, 4> color_runs_{};
+  uint32_t color_run_next_ = 0;
+  uint64_t targets_generation_ = 1;
   std::set<SurfaceTuple> shadow_surfaces_;
   uint64_t frame_ = 0;
 };
