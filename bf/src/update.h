@@ -78,8 +78,10 @@ bool RestartSelf();
 void CleanUpAfterUpdate();
 // At start, before the shaders are prepared and the renderer opens its storage: true when the shaders were last
 // prepared for another version (an update), so the shader page makes every pipeline again and says the game was
-// updated. The old cache (cache_root's native_x_renderer and shaders folders) is deleted first, once a version: a page
-// left before its end goes on at the next start over what it had made by then.
+// updated. The old cache (cache_root's native_x_renderer and shaders folders) is deleted first, once a version, on
+// every update without exception (TekRantGaming's rule, 17 Nov 2026); also whenever the cache's own marker
+// (shaders-version.txt) names another version or none, even with the settings' marker lost. A page left before its
+// end goes on at the next start over what this version had made by then.
 bool PrepareShadersAfterUpdate(const std::filesystem::path& cache_root, const std::string& prepared_for);
 // True when version a ("0.2.1") is newer than b. A version with a suffix comes before the same numbers without one
 // (0.2.0-preview < 0.2.0); suffixes with numbers count up (0.2.0-beta.2 < 0.2.0-beta.3). A hotfix is a fourth number:
