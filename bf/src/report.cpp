@@ -545,11 +545,12 @@ std::string RegexEscape(const std::string& s) {
 }
 bool IsLoopbackOrVersion(const std::string& text, size_t at, const std::string& ip) {
   if (ip.rfind("127.", 0) == 0 || ip.rfind("0.", 0) == 0 || ip == "255.255.255.255") return true;
-  // A version (0.4.6.7, Vulkan's 1.4.3.3) right after "version" or a "v".
+  // A version (0.4.6.7, Vulkan's 1.4.3.3) right after "version" or a "v", or a graphics driver's (issue 41, 17 Nov
+  // 2026: an AMD driver of four small numbers became "driver [ip]" in the report's system table).
   const size_t from = at >= 16 ? at - 16 : 0;
   std::string before = text.substr(from, at - from);
   for (char& c : before) c = char(std::tolower(static_cast<unsigned char>(c)));
-  if (before.find("version") != std::string::npos) return true;
+  if (before.find("version") != std::string::npos || before.find("driver") != std::string::npos) return true;
   return at > 0 && (text[at - 1] == 'v' || text[at - 1] == 'V');
 }
 }  // namespace
@@ -701,6 +702,7 @@ bool ScrubSelfTest(std::string& failures) {
       {"bind to 127.0.0.1:0", "bind to 127.0.0.1:0"},
       {"Battlefield 1943 Reborn version 0.4.6.7", "Battlefield 1943 Reborn version 0.4.6.7"},
       {"driver 32.0.15.6201 ok", "driver 32.0.15.6201 ok"},
+      {"RX 6500 XT, driver 23.40.27.6 (AMD)", "RX 6500 XT, driver 23.40.27.6 (AMD)"},
       {"[2026-11-16 04:37:39.560] [info]", "[2026-11-16 04:37:39.560] [info]"},
       {"peer 2001:db8:85a3::8a2e:370:7334 left", "peer [ip] left"},
       {"rex::cvar::GetFlag", "rex::cvar::GetFlag"},

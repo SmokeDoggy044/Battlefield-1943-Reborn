@@ -617,7 +617,7 @@
                                    : required ? "" : "OPTIONAL";
           RpLabel(d, st, ImVec2(x0, y), name, required, note);
           const float h = field == kRpWhat ? st(80) : field == kRpSteps ? st(60) : st(32);
-          const std::string hint = field == kRpContact ? "A Discord or GitHub name. Leave it empty to stay anonymous."
+          const std::string hint = field == kRpContact ? "A Discord or GitHub name, shown on the public report. Empty stays anonymous."
                                    : field == kRpSteps && !idea ? "1. Join a server..." : "";
           if (RpBox(d, st, ImVec2(x0, y + st(14)), ImVec2(x1, y + st(14) + h), *RpText(field), hint, RpMax(field), focused,
                     RpMulti(field)))
