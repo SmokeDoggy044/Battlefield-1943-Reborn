@@ -11,6 +11,7 @@
 #   sudo bash build_in_ubuntu2204.sh appimage <version> [out]         build_appimage.sh on the host from the root's
 #                                                           build, with the root's GCC 13 C++ runtime (glibc 2.35)
 #   sudo bash build_in_ubuntu2204.sh check                  the glibc versions the build needs, and a start inside the root
+#   build, appimage and check stop when a Linux fast path is missing from librexruntime.so (fastpaths below).
 #
 # BF_JAMMY_ROOT: the root (default /srv/jammy). The sources come from BF_LINUX_SOURCE / the Windows checkout through
 # /mnt/f, bind mounted into the root, as build_linux.sh expects.
@@ -35,6 +36,20 @@ needs() {
     echo "  $(basename "$f"): $(objdump -T "$(readlink -f "$f")" 2>/dev/null | grep -o 'GLIBC_[0-9.]*' |
                                sort -t. -k2,2n -k3,3n -u | tail -1)"
   done
+}
+# The Linux fast paths that must be in the build whatever kernel headers the root has (17 Nov 2026: pull request 28's
+# PROCMAP_QUERY look up, ioctl 0xc0686611, was compiled out of 0.4.7 to 0.4.7.2 because the root's headers are 5.15).
+# Stops the build when one is missing.
+fastpaths() {
+  local f="$1" n
+  [ -e "$f" ] || { echo "FAST PATH CHECK: $f is missing" >&2; exit 1; }
+  n=$(objdump -d --no-show-raw-insn "$(readlink -f "$f")" | grep -c -i '0xc0686611' || true)
+  if [ "${n:-0}" -lt 1 ]; then
+    echo "FAST PATH CHECK FAILED: $(basename "$f") has no PROCMAP_QUERY ioctl (0xc0686611): pull request 28's" >&2
+    echo "  Linux 6.11 page look up was compiled out (see sdk/src-bf/src/core/memory_posix.cpp)" >&2
+    exit 1
+  fi
+  echo "  fast path check: $(basename "$f") has the PROCMAP_QUERY look up ($n use(s) of 0xc0686611)"
 }
 
 case "$WHAT" in
@@ -70,6 +85,7 @@ case "$WHAT" in
     inside env BF_VERSION="$V" nice -n 10 bash /root/build_linux_run.sh "${3:-all}" Release
     needs "$J/root/bf-linux/src/bf/out/build/linux-amd64-release/bf1943" "$J/root/bf-linux/sdk/lib/librexruntime.so" \
       "$J/root/bf-linux/sdk/lib/librexgpu-bfnative.so"
+    fastpaths "$J/root/bf-linux/sdk/lib/librexruntime.so"
     ;;
   appimage)
     V="${2:?version}"
@@ -78,11 +94,13 @@ case "$WHAT" in
       BF_CXX_LIB_DIR="$J/usr/lib/x86_64-linux-gnu" bash "$HERE/build_appimage.sh" "$V" Release "$OUT"
     needs "$J/root/bf-linux/AppDir-linux-amd64-release"/usr/bin/bf1943 "$J/root/bf-linux/AppDir-linux-amd64-release"/usr/bin/*.so \
       "$J/root/bf-linux/AppDir-linux-amd64-release"/usr/lib/*.so*
+    fastpaths "$J/root/bf-linux/AppDir-linux-amd64-release/usr/bin/librexruntime.so"
     ;;
   check)
     mounts
     needs "$J/root/bf-linux/AppDir-linux-amd64-release"/usr/bin/bf1943 "$J/root/bf-linux/AppDir-linux-amd64-release"/usr/bin/*.so \
       "$J/root/bf-linux/AppDir-linux-amd64-release"/usr/lib/*.so*
+    fastpaths "$J/root/bf-linux/AppDir-linux-amd64-release/usr/bin/librexruntime.so"
     inside bash -c 'cd /root/bf-linux/AppDir-linux-amd64-release/usr/bin && echo "inside: $(ldd --version | head -1)" &&
       echo "libraries not found: $(LD_LIBRARY_PATH=.:../lib ldd ./bf1943 | grep -c "not found")" &&
       { LD_LIBRARY_PATH=.:../lib timeout 20 ./bf1943 --help > /tmp/help.txt 2>&1 || true; } && head -3 /tmp/help.txt'
