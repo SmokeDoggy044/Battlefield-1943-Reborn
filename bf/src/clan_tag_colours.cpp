@@ -33,6 +33,7 @@
 #include <rex/ppc/context.h>
 
 #include "clan_tags.h"
+#include "voice_mute.h"
 
 REXCVAR_DECLARE(bool, server);
 REXCVAR_DEFINE_BOOL(bf_dev_tag_colours, true, "BF1943/Online",
@@ -65,6 +66,10 @@ struct Run {
   double seconds = 0;
 };
 thread_local Run g_run;
+#if defined(BF_DEV_TOOLS)
+thread_local bool g_probe_pen = false;  // BF_DEV_TEXTPOS: the next drawn glyph's pen
+thread_local int g_pen_x = 0, g_pen_y = 0;
+#endif
 
 // The run's characters as the glyph calls will come (13, 10 and 189 skipped), each one of a developer's whole tagged
 // name marked with its place in it (1 the "[", 6 the name's first letter...): "[Dev]" and the name after it, up to
@@ -116,7 +121,9 @@ double Seconds() {
 
 }  // namespace
 
-REX_HOOK_RAW(sub_826AB588) {
+namespace {
+// One text run of the game's (the hook below): the Dev tag's colours, or the run as it is.
+void DrawTextRun(PPCContext& __restrict ctx, uint8_t* base) {
 #if defined(BF_DEV_TOOLS)
   // BF_DEV_TEXTLOG=1: the first 60 different texts the game draws through here (what reaches the hook).
   static const bool text_log = std::getenv("BF_DEV_TEXTLOG") != nullptr;
@@ -141,6 +148,40 @@ REX_HOOK_RAW(sub_826AB588) {
       REXLOG_INFO("BF dev text: call {} renderer {:08X} colour {:08X} \"{}\"", calls, ctx.r3.u32,
                   Plausible(ctx.r3.u32) ? Load32(base, ctx.r3.u32 + kColour) : 0u, text);
   }
+  // BF_DEV_TEXTPOS=1: each different text with the renderer's matrix (+128, 16 floats) and its first glyph's pen (how
+  // voice_mute.cpp finds the scoreboards' rows; drawn without the Dev tag's colours while on).
+  static const bool text_pos = std::getenv("BF_DEV_TEXTPOS") != nullptr;
+  if (text_pos && Plausible(ctx.r3.u32) && Plausible(ctx.r5.u32)) {
+    static std::set<std::string> seen;
+    std::string text;
+    const uint32_t head = ctx.r5.u32;
+    uint32_t n = 0;
+    for (uint32_t line = Load32(base, head); line != head && Plausible(line) && n < 8; ++n, line = Load32(base, line)) {
+      const uint32_t b = Load32(base, line + 8), e = Load32(base, line + 12);
+      if (!Plausible(b) || e < b || e - b > 400) break;
+      for (uint32_t p = b; p + 2 <= e; p += 2) {
+        const uint16_t c = Load16(base, p);
+        text += c >= 32 && c < 127 ? char(c) : '?';
+      }
+      text += '|';
+    }
+    float m[16];
+    for (int i = 0; i < 16; ++i) {
+      const uint32_t u = Load32(base, ctx.r3.u32 + 128 + 4 * i);
+      std::memcpy(&m[i], &u, 4);
+    }
+    g_probe_pen = true, g_pen_x = g_pen_y = -99999;
+    __imp__sub_826AB588(ctx, base);
+    g_probe_pen = false;
+    const std::string key = text + "@" + std::to_string(int(m[12] * 1000)) + "," + std::to_string(int(m[13] * 1000)) + "," +
+                            std::to_string(g_pen_x) + "," + std::to_string(g_pen_y);
+    if (seen.size() < 1500 && seen.insert(key).second)
+      REXLOG_INFO("BF dev textpos: \"{}\" colour {:08X} pen {} {} m {:.4f} {:.4f} {:.4f} {:.4f} / {:.4f} {:.4f} {:.4f} "
+                  "{:.4f} / {:.4f} {:.4f} {:.4f} {:.4f} / {:.4f} {:.4f} {:.4f} {:.4f}",
+                  text, Load32(base, ctx.r3.u32 + kColour), g_pen_x, g_pen_y, m[0], m[1], m[2], m[3], m[4], m[5], m[6],
+                  m[7], m[8], m[9], m[10], m[11], m[12], m[13], m[14], m[15]);
+    return;
+  }
 #endif
   if (REXCVAR_GET(server) || !REXCVAR_GET(bf_dev_tag_colours) || g_run.active) return __imp__sub_826AB588(ctx, base);
   std::vector<uint8_t> letter;
@@ -163,8 +204,26 @@ REX_HOOK_RAW(sub_826AB588) {
   Store32(base, renderer + kColour, g_run.colour);
   g_run.active = false;
 }
+}  // namespace
+
+// Every run of the game's text: the scoreboards' voice mute sees it first (voice_mute.h: where the scoreboard's rows
+// are, and its "SEE GAMER CARD" prompt's words), then it is drawn.
+REX_HOOK_RAW(sub_826AB588) {
+  const bool rewrote = bf1943::mute::RewriteGameText(base, ctx.r5.u32);
+  bf1943::mute::NoteGameText(base, ctx.r3.u32, ctx.r5.u32);
+  DrawTextRun(ctx, base);
+  bf1943::mute::EndGameText();
+  if (rewrote) bf1943::mute::RestoreGameText(base);
+}
 
 REX_HOOK_RAW(sub_826AB240) {
+  if (ctx.r9.u32 == 0 && Plausible(ctx.r7.u32)) bf1943::mute::NoteGameGlyph(int32_t(Load32(base, ctx.r7.u32)), int32_t(ctx.r8.u32));
+#if defined(BF_DEV_TOOLS)
+  if (g_probe_pen && ctx.r9.u32 == 0 && Plausible(ctx.r7.u32)) {
+    g_pen_x = int32_t(Load32(base, ctx.r7.u32)), g_pen_y = int32_t(ctx.r8.u32);
+    g_probe_pen = false;
+  }
+#endif
   if (g_run.active && ctx.r9.u32 == 0 && ctx.r3.u32 == g_run.renderer) {
     const uint32_t i = g_run.glyph++;
     const uint8_t n = i < g_run.letter.size() ? g_run.letter[i] : 0;

@@ -35,6 +35,7 @@
 #endif
 
 #include <algorithm>
+#include <cctype>
 #include <array>
 #include <atomic>
 #include <chrono>
@@ -52,6 +53,7 @@
 #include <vector>
 
 #include <SDL3/SDL.h>
+#include <fmt/format.h>
 #include <rex/cvar.h>
 #include <rex/logging.h>
 
@@ -355,6 +357,37 @@ std::string ShownName(const std::string& name) {
   return text_filter::NameAllowed(name) ? name : std::string(name.size(), '*');
 }
 
+// ---- per player voice mute (comms.h): the muted players' names, lower case (names are compared without case, as the
+// backend keeps one name per account whatever its case), each with its spelling as first muted for the file.
+std::mutex g_mute_mutex;
+std::map<std::string, std::string> g_muted;
+std::filesystem::path g_mute_file;  // <user>/muted-players.txt; empty until SetUserDir (nothing saved before)
+
+std::string Lower(std::string s) {
+  for (char& c : s) c = char(std::tolower(static_cast<unsigned char>(c)));
+  return s;
+}
+std::string Plain(const std::string& name) {
+  // "[TAG]Name": the tag the backend gave (clan_tags.cpp writes it into the game's own player list).
+  if (name.size() > 2 && name[0] == '[') {
+    const size_t close = name.find(']');
+    if (close != std::string::npos && close + 1 < name.size()) return name.substr(close + 1);
+  }
+  return name;
+}
+bool MutedKey(const std::string& key) {
+  std::lock_guard lock(g_mute_mutex);
+  return g_muted.count(key) != 0;
+}
+void SaveMuted() {  // under g_mute_mutex
+  if (g_mute_file.empty()) return;
+  std::ofstream f(g_mute_file, std::ios::trunc);
+  f << "# Players whose voices this game does not play (Battlefield 1943 Reborn, the scoreboard's mute). One name a "
+       "line.\n";
+  for (const auto& [key, name] : g_muted) f << name << "\n";
+  if (!f) REXLOG_WARN("BF comms: muted-players.txt could not be written");
+}
+
 // ---- how loud a voice is (TekRantGaming, 13 Nov 2026: "voice chat volume needs to be higher so lets update the volume
 // slider to go higher than 200% lets say a 500% max or shold we just adjust the current system so that the original
 // slider amount increases it more per %"). Both. Voices were played as their microphones sent them, 3 dB down, so a
@@ -498,6 +531,9 @@ class Engine {
   double follow_at_ = -100;  // BF_DEV_FOLLOW_TEAM
   double follow_suicide_at_ = -1;  // BF_DEV_FOLLOW_TEAM: the game's suicide after the switch, so it spawns at its base
   std::set<uint16_t> heard_from_;
+  int frames_muted_ = 0;  // frames of muted players dropped (the same log line)
+  std::set<std::string> muted_from_;
+  std::map<std::string, int> mixed_from_;  // frames each player's voice was placed in the mix (the same line)
   double stats_at_ = 0;
 #if defined(BF_DEV_TOOLS)
   std::vector<int16_t> dev_mic_;
@@ -692,14 +728,21 @@ class Engine {
           if (!r.ok || codec != kCodecAdpcm || !r.Need(len)) break;
           if (REXCVAR_GET(bf_voice_mode) == "off") break;
           Talker& t = talkers_[from];
+          auto it = roster_.find(from);
+          if (it != roster_.end()) t.name = it->second;
+          // A player this game muted (the scoreboard's mute): dropped here, never decoded, mixed or shown talking;
+          // what was waiting to play goes too, so a mute is heard at once.
+          if (!t.name.empty() && MutedKey(Lower(t.name))) {
+            t.frames.clear(), t.playing = false, t.last_packet = now;
+            ++frames_muted_, muted_from_.insert(t.name);
+            break;
+          }
           std::array<int16_t, kFrame> pcm;
           if (!DecodeFrame(buf + 9 + r.at, len, pcm)) break;
           if (t.playing && SeqDiff(seq, t.next) < 0) break;  // late
           t.Add(seq, pcm);
           ++frames_heard_, heard_from_.insert(from);
           t.last_packet = now, t.pos[0] = x, t.pos[1] = y, t.pos[2] = z;
-          auto it = roster_.find(from);
-          if (it != roster_.end()) t.name = it->second;
           break;
         }
         default:
@@ -891,11 +934,22 @@ class Engine {
       }
       MixFrame(now);
     }
-    if (now - stats_at_ >= 30) {
-      if (frames_sent_ || frames_heard_)
-        REXLOG_INFO("BF comms: voice in the last {:.0f} s: {} frames sent, {} heard from {} players", now - stats_at_,
-                    frames_sent_, frames_heard_, heard_from_.size());
-      stats_at_ = now, frames_sent_ = frames_heard_ = 0, heard_from_.clear();
+#if defined(BF_DEV_TOOLS)
+    static const double stats_every = Env("BF_DEV_VOICE_STATS") ? std::max(1.0, std::atof(Env("BF_DEV_VOICE_STATS"))) : 30.0;
+#else
+    constexpr double stats_every = 30.0;
+#endif
+    if (now - stats_at_ >= stats_every) {
+      if (frames_sent_ || frames_heard_ || frames_muted_) {
+        std::string mixed, muted;
+        for (const auto& [name, n] : mixed_from_) mixed += fmt::format("{}{} {}", mixed.empty() ? "" : ", ", name, n);
+        for (const auto& name : muted_from_) muted += (muted.empty() ? "" : ", ") + name;
+        REXLOG_INFO("BF comms: voice in the last {:.0f} s: {} frames sent, {} heard from {} players (played: {}){}",
+                    now - stats_at_, frames_sent_, frames_heard_, heard_from_.size(), mixed.empty() ? "none" : mixed,
+                    frames_muted_ ? fmt::format("; {} frames of muted players dropped ({})", frames_muted_, muted) : "");
+      }
+      stats_at_ = now, frames_sent_ = frames_heard_ = frames_muted_ = 0, heard_from_.clear(), muted_from_.clear();
+      mixed_from_.clear();
     }
     // Who is talking: only voices the player can hear (run zipcheck4: on the deploy screen, where the host passes on
     // every voice, the name of a player talking at the other base showed though it could not be heard; zipcheck6:
@@ -924,6 +978,11 @@ class Engine {
       if (!t.playing) {
         if (now - t.last_packet > 30) it = talkers_.erase(it);
         else ++it;
+        continue;
+      }
+      if (!t.name.empty() && MutedKey(Lower(t.name))) {  // muted while its voice waited to play
+        t.frames.clear(), t.playing = false;
+        ++it;
         continue;
       }
       std::array<int16_t, kFrame> frame;
@@ -957,6 +1016,7 @@ class Engine {
       const float angle = (pan + 1.0f) * 0.25f * 3.14159265f;
       const float gl = gain * std::cos(angle) * 1.41421356f, gr = gain * std::sin(angle) * 1.41421356f;
       if (gain > 0.0005f) {
+        ++mixed_from_[t.name.empty() ? std::string("?") : t.name];
         // Straight ahead: the voice's own level in each ear (gl and gr are 1 there); to one side, 3 dB over it there.
         for (int i = 0; i < kFrame; ++i) {
           const float s = frame[i] / 32768.0f;
@@ -1093,6 +1153,47 @@ bool CurrentBroadcast(std::string* text, int* kind, double* age, double* seconds
 std::vector<std::string> Speaking() {
   std::lock_guard lock(g_mutex);
   return g_speaking;
+}
+void SetUserDir(const std::filesystem::path& user_dir) {
+  std::lock_guard lock(g_mute_mutex);
+  g_mute_file = user_dir / "muted-players.txt";
+  std::ifstream f(g_mute_file);
+  std::string line;
+  while (std::getline(f, line)) {
+    while (!line.empty() && (line.back() == '\r' || line.back() == ' ' || line.back() == '\t')) line.pop_back();
+    while (!line.empty() && (line.front() == ' ' || line.front() == '\t')) line.erase(line.begin());
+    if (line.empty() || line[0] == '#' || line.size() > 64) continue;
+    g_muted.emplace(Lower(Plain(line)), Plain(line));
+  }
+  if (!g_muted.empty()) REXLOG_INFO("BF comms: {} muted player{} (muted-players.txt)", g_muted.size(), g_muted.size() == 1 ? "" : "s");
+}
+std::string PlainName(const std::string& name) { return Plain(name); }
+bool IsMe(const std::string& name) {
+  const std::string& me = PlayerName();
+  return !me.empty() && Lower(Plain(name)) == Lower(Plain(me));
+}
+bool Muted(const std::string& name) { return !name.empty() && MutedKey(Lower(Plain(name))); }
+void SetMuted(const std::string& name, bool muted) {
+  const std::string plain = Plain(name);
+  if (plain.empty() || plain.size() > 64 || (muted && IsMe(plain))) return;  // never the player's own voice
+  std::lock_guard lock(g_mute_mutex);
+  const std::string key = Lower(plain);
+  if (muted == (g_muted.count(key) != 0)) return;
+  if (muted) g_muted.emplace(key, plain);
+  else g_muted.erase(key);
+  SaveMuted();
+  REXLOG_INFO("BF comms: {} {} ({} muted)", plain, muted ? "muted" : "unmuted", g_muted.size());
+}
+bool ToggleMuted(const std::string& name) {
+  SetMuted(name, !Muted(name));
+  return Muted(name);
+}
+bool Talking(const std::string& name) {
+  const std::string key = Lower(Plain(name));
+  std::lock_guard lock(g_mutex);
+  for (const auto& s : g_speaking)
+    if (Lower(Plain(s)) == key) return true;
+  return false;
 }
 bool Transmitting() { return g_transmitting.load(); }
 void SetPushToTalk(bool down) { g_ptt.store(down, std::memory_order_relaxed); }

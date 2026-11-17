@@ -2,6 +2,7 @@
 #pragma once
 
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <vector>
 
@@ -36,6 +37,18 @@ void SendChat(Channel channel, const std::string& text);
 // update, 2 a server restart; `age` seconds since it arrived, `seconds` how long it stays.
 bool CurrentBroadcast(std::string* text, int* kind, double* age, double* seconds);
 std::vector<std::string> Speaking();  // the players heard now
+// Per player voice mute (TekRantGaming, 17 Nov 2026: "allows users to mute individual users so that their comms dont
+// come across on voice chat anymore"). On this game only: a muted player's voice is dropped as it arrives, before it
+// is decoded or mixed; nothing is sent, the server and the muted player are not told. Keyed on the player's name
+// (the account's, without a clan tag: "[TAG]Name" and "Name" are the same player) and kept in the user folder's
+// muted-players.txt, so a mute lasts across matches, servers and restarts. Never the player's own name.
+void SetUserDir(const std::filesystem::path& user_dir);  // game_menu.cpp at the start: where muted-players.txt is
+std::string PlainName(const std::string& name);  // "[TAG]Name" as "Name" (a name as the game's own lists show it)
+bool Muted(const std::string& name);
+void SetMuted(const std::string& name, bool muted);  // saved at once; the player's own name is refused
+bool ToggleMuted(const std::string& name);           // the new state
+bool IsMe(const std::string& name);                  // the name played under (any clan tag ignored)
+bool Talking(const std::string& name);               // heard now (in Speaking()); a muted player never is
 bool Transmitting();                  // the local player's voice is going out
 void SetPushToTalk(bool down);
 void SetTyping(bool typing);

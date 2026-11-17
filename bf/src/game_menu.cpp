@@ -61,6 +61,7 @@
 #include "projects_art.h"
 #include "steam_shortcut.h"
 #include "comms.h"
+#include "voice_mute.h"  // the scoreboard's voice mute
 #include "discord_presence.h"
 #include "text_filter.h"
 #include "changelog.h"
@@ -5750,6 +5751,7 @@ void CreateGameMenu(rex::ui::ImGuiDrawer* drawer, const fs::path& user_dir, std:
                     std::function<fs::path()> game_dir) {
   // A dedicated server shows no menu: since our menu opens on the first frame, a server's window looked like the game's
   // (TekRantGaming, 5 Nov).
+  if (!REXCVAR_GET(server)) comms::SetUserDir(user_dir);  // the voice mutes (muted-players.txt), with or without our menu
   if (!REXCVAR_GET(bf_launcher) || REXCVAR_GET(server) || g_menu) return;
   const fs::path game = game_dir ? game_dir() : fs::path();
   g_menu = new GameMenu(drawer, user_dir / "bf1943-settings.txt", std::move(fullscreen), std::move(quit),
