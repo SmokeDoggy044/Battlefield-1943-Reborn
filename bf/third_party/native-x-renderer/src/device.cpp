@@ -495,8 +495,13 @@ static const char* PresentModeText(const std::string& mode, bool vsync_mailbox) 
                                : "default (MAILBOX, else IMMEDIATE)";
 }
 
+static std::atomic<int> g_vsync{-1};
+void SetVsync(bool on) { g_vsync.store(on ? 1 : 0); }
+
 std::string Device::WantedPresentMode() const {
-  return force_vsync_ ? std::string("vsync") : REXCVAR_GET(native_x_renderer_present_mode);
+  const int vsync = g_vsync.load();
+  if (force_vsync_ || vsync == 1) return "vsync";
+  return vsync == 0 ? "immediate" : REXCVAR_GET(native_x_renderer_present_mode);
 }
 
 void Device::ApplyPresentMode() {

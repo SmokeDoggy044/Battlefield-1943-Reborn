@@ -3775,7 +3775,7 @@ class GameMenu final : public rex::ui::ImGuiDialog {
                      {"Off", "On"}, settings_.Get("vsync", "off") == "on" ? 1 : 0};
     vsync.choose = [this](int i) {
       settings_.values["vsync"] = i ? "on" : "off";
-      rex::cvar::SetFlagByName("native_x_renderer_present_mode", i ? "vsync" : "immediate");
+      native_x_renderer::SetVsync(i);
       ApplyFrameRate();
       settings_.Save();
     };

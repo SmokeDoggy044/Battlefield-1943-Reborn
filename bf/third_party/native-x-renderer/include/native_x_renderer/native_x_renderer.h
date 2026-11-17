@@ -303,6 +303,7 @@ bool ScopeView(float right[3], float up[3], float back[3], float& tan_half_v_own
 void NoteGameMenu();
 // Whether NoteGameMenu came within the last 1.5 s.
 bool GameMenuRecently();
+void SetVsync(bool on);
 
 // D150: a fixed GPU workload timed once, for a first start's auto detect: started now, run at a present soon after;
 // its time (ms) once known (false until then; -1 if it could not run). About 0.6 ms on an RTX 4070 Ti.
