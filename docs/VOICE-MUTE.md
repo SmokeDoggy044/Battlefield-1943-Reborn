@@ -87,3 +87,13 @@ The mutes themselves are only in `muted-players.txt` (delete a line, or the file
 - **eor2**: the end of round screen with keyboard and mouse and keyboard prompts in a real 1280 x 720 window (this PC
   runs at 250%, so --window_width=512 --window_height=288): "F MUTE / UNMUTE", "R NEXT INFO SCREEN"; F muted peer2 in
   the match, then unmuted and muted it on the end screen; the speakers and the slash read at 720p as at 3200 x 1800.
+- **Linux, on the ROG Ally** (a developer build from the Ubuntu 22.04 root; backend, host, server and three clients on
+  the Ally's own loopback, the talking clients in headless gamescope): **lnx1** Y on the game's scoreboard muted the
+  1000 Hz player at 35.0 s into the recording and unmuted it at 65.0 s, the other voice steady throughout, as on
+  Windows; **lnx2** keyboard prompts ("F MUTE / UNMUTE"), F on the game's scoreboard muted, F in our pause's
+  Scoreboard unmuted and a click on a speaker there muted; **lnx3** a restart from lnx2's user folders: the muted
+  player was never heard and their row showed the struck through speaker.
+- lnx1 caught the speakers staying a few frames over the match after the scoreboard closed (the overlay kept 0.12 s
+  of the game's text). Since then only the game's latest scoreboard frame is used and the speakers go once the game
+  has not drawn it for about one and a half of its frames: 47 ms after its last frame on Windows (fn2), 76 to 113 ms
+  on the Ally, whose frames are slower; no speaker left in the shots taken just after closing (lnx2).

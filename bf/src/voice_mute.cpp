@@ -202,14 +202,33 @@ void RestoreGameText(uint8_t* base) {
 
 void DrawOverGame(ImGuiIO& io) {
   if (!REXCVAR_GET(bf_scoreboard_mute) || !InMatch()) return;
+  // Only the game's latest frame of the scoreboard: the runs drawn around its last "V" heading, and only while the
+  // game is still drawing it (its last heading no older than about one and a half of its frames). With a fixed 0.12 s
+  // the speakers stayed a few frames over the match after the scoreboard closed (Ally run lnx1, shot 58).
+  static double last_heading = -1, cadence = 1.0 / 30.0;  // our UI thread only
+  static bool shown = false;
+  const double now_s = Seconds();
   std::vector<GameRun> runs;
+  double latest = -1;
   {
     std::lock_guard lock(g_mutex);
-    const double fresh = Seconds() - 0.12;
     for (const GameRun& r : g_runs)
-      if (r.at >= fresh) runs.push_back(r);
+      if (r.text == "V") latest = std::max(latest, r.at);
+    for (const GameRun& r : g_runs)
+      if (latest >= 0 && std::fabs(r.at - latest) < 0.015) runs.push_back(r);
   }
-  if (runs.empty()) return;
+  if (latest > last_heading + 0.004) {
+    if (last_heading > 0 && latest - last_heading < 0.25) cadence = 0.8 * cadence + 0.2 * (latest - last_heading);
+    last_heading = latest;
+  }
+  const double age = latest < 0 ? 1e9 : now_s - latest;
+  const bool live = age < std::min(0.1, 1.6 * cadence + 0.006);
+  if (live != shown) {
+    shown = live;
+    if (live) REXLOG_INFO("BF scoreboard: speakers shown (the game draws a scoreboard, a frame every {:.0f} ms)", cadence * 1000);
+    else REXLOG_INFO("BF scoreboard: speakers hidden, {:.0f} ms after the game's last scoreboard frame", std::min(age, 9.999) * 1000);
+  }
+  if (!live || runs.empty()) return;
   const ImVec2 size = io.DisplaySize;
   auto screen = [&](float cx, float cy) { return ImVec2((cx + 1.0f) * 0.5f * size.x, (1.0f - cy) * 0.5f * size.y); };
   // The tables: a "V" heading with a name heading on its line, to its right.
