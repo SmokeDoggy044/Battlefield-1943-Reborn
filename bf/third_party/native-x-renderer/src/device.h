@@ -105,6 +105,7 @@ class Device {
   void ApplyPresentMode();
   // native_x_renderer_present_mode, or "vsync" while ForceVsync is on.
   std::string WantedPresentMode() const;
+  bool VsyncMailbox() const;
   std::string present_mode_;
   bool present_mode_applied_ = false;
   bool force_vsync_ = false;

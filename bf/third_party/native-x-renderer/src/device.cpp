@@ -307,8 +307,16 @@ bool Device::Create(void* native_window, bool half_precision) {
   return true;
 }
 
-static std::vector<VkPresentModeKHR> PresentModesFor(const std::string& mode);
-static const char* PresentModeText(const std::string& mode);
+static std::vector<VkPresentModeKHR> PresentModesFor(const std::string& mode, bool vsync_mailbox);
+static const char* PresentModeText(const std::string& mode, bool vsync_mailbox);
+
+bool Device::VsyncMailbox() const {
+#ifdef _WIN32
+  return false;
+#else
+  return !force_vsync_;
+#endif
+}
 
 bool Device::CreateSwapChain() {
   IEngineFactoryVk* factory = GetEngineFactoryVk();
@@ -335,7 +343,7 @@ bool Device::CreateSwapChain() {
   // failure), so the first Present needs no second swap chain. Before, the first one was made with V-Sync and made
   // again at the first Present; a player's PC refused every swap chain after the first on the game window.
   const std::string mode = vsync_fallback_ ? std::string() : WantedPresentMode();
-  const std::vector<VkPresentModeKHR> modes = vsync_fallback_ ? std::vector<VkPresentModeKHR>() : PresentModesFor(mode);
+  const std::vector<VkPresentModeKHR> modes = vsync_fallback_ ? std::vector<VkPresentModeKHR>() : PresentModesFor(mode, VsyncMailbox());
   SetSwapChainVkInitialPresentation(vsync_fallback_, modes.empty() ? nullptr : modes.data(), Uint32(modes.size()));
   factory->CreateSwapChainVk(device_, context_, swap_chain_desc, window, &swap_chain_);
   SetSwapChainVkInitialPresentation(true, nullptr, 0);  // DiligentCore's default again
@@ -343,7 +351,7 @@ bool Device::CreateSwapChain() {
   if (!vsync_fallback_) {
     present_mode_applied_ = true;
     present_mode_ = mode;
-    REXLOG_INFO("[native_x_renderer] present mode: {} (the swap chain made with it)", PresentModeText(mode));
+    REXLOG_INFO("[native_x_renderer] present mode: {} (the swap chain made with it)", PresentModeText(mode, VsyncMailbox()));
   }
   return true;
 }
@@ -469,7 +477,8 @@ Device::FenceState Device::GetFenceState() {
 // interval (without V-Sync: MAILBOX, else IMMEDIATE, else FIFO).
 // D107: V-Sync is FIFO, which every driver offers. NVIDIA's MAILBOX queued three frames whenever the game ran at the
 // display's rate (16-19 ms from present to display at 160 Hz, FIFO 5.8 ms).
-static std::vector<VkPresentModeKHR> PresentModesFor(const std::string& mode) {
+static std::vector<VkPresentModeKHR> PresentModesFor(const std::string& mode, bool vsync_mailbox) {
+  if (mode == "vsync" && vsync_mailbox) return {VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_FIFO_KHR};
   if (mode == "vsync") return {VK_PRESENT_MODE_FIFO_KHR};
   if (mode == "mailbox") return {VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_FIFO_KHR};
   if (mode == "immediate") return {VK_PRESENT_MODE_IMMEDIATE_KHR, VK_PRESENT_MODE_MAILBOX_KHR, VK_PRESENT_MODE_FIFO_KHR};
@@ -478,8 +487,9 @@ static std::vector<VkPresentModeKHR> PresentModesFor(const std::string& mode) {
   return {};
 }
 
-static const char* PresentModeText(const std::string& mode) {
-  return mode == "vsync"       ? "vsync (FIFO)"
+static const char* PresentModeText(const std::string& mode, bool vsync_mailbox) {
+  return mode == "vsync" && vsync_mailbox ? "vsync on Linux (MAILBOX at the frame limit, else FIFO)"
+         : mode == "vsync"     ? "vsync (FIFO)"
          : mode == "mailbox"   ? "mailbox (MAILBOX, else FIFO)"
          : mode == "immediate" ? "immediate (IMMEDIATE, else MAILBOX)"
                                : "default (MAILBOX, else IMMEDIATE)";
@@ -492,7 +502,7 @@ std::string Device::WantedPresentMode() const {
 void Device::ApplyPresentMode() {
   const std::string mode = WantedPresentMode();
   if (present_mode_applied_ && mode == present_mode_) return;
-  REXLOG_INFO("[native_x_renderer] present mode changed to {}: a new swap chain", PresentModeText(mode));
+  REXLOG_INFO("[native_x_renderer] present mode changed to {}: a new swap chain", PresentModeText(mode, VsyncMailbox()));
   present_mode_applied_ = true;
   present_mode_ = mode;
   vsync_fallback_ = false;
