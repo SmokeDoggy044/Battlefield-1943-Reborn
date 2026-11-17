@@ -3121,6 +3121,16 @@ void HostRealPixelSize(uint32_t width, uint32_t height) {
   event.window.data2 = int32_t(height);
   if (!SDL_PushEvent(&event)) REXLOG_WARN("[native_x_renderer] the window's real size not sent: {}", SDL_GetError());
 }
+void WaitForFullscreenSize(rex::ui::Window* window, Device& device) {
+  SDL_Window* sdl = static_cast<rex::ui::WindowSDL*>(window)->sdl_window();
+  if (!sdl || !window->IsFullscreen()) return;
+  const bool synced = SDL_SyncWindow(sdl);
+  int width = 0, height = 0;
+  if (!SDL_GetWindowSizeInPixels(sdl, &width, &height) || width <= 0 || height <= 0) return;
+  REXLOG_INFO("[native_x_renderer] the window at {}x{} for the render scale ({})", width, height,
+              synced ? "synced" : "SDL_SyncWindow timed out");
+  device.swap_chain()->Resize(uint32_t(width), uint32_t(height));
+}
 void* LinuxHostWindow(rex::ui::Window* window) {
   static HostWindow host;
   SDL_Window* sdl = window ? static_cast<rex::ui::WindowSDL*>(window)->sdl_window() : nullptr;
@@ -3202,6 +3212,9 @@ bool Initialize(const Profile& profile, rex::system::IGraphicsSystem* graphics, 
   // has the output's aspect ratio; the vertical scale is the one computed or forced, and the horizontal one
   // follows from the output's aspect ratio. native_x_renderer_aspect (D104) asks for another ratio than the
   // output's: the image has that one, as large as fits the output, and the presentation centers it with bars.
+#if !defined(_WIN32)
+  if (static_cast<const HostWindow*>(native_window)->wayland_surface) WaitForFullscreenSize(window, *device);
+#endif
   {
     const auto& output = device->swap_chain()->GetDesc();
     uint32_t guest_width = std::max(profile.output_width, 1u), guest_height = std::max(profile.output_height, 1u);
