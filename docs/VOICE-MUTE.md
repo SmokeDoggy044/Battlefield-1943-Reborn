@@ -70,7 +70,7 @@ The mutes themselves are only in `muted-players.txt` (delete a line, or the file
 - On the end of round screen nobody is heard (voice goes out only from a soldier in the world), so its speakers show
   quiet or muted, never talking.
 
-## Tests (17 Nov 2026, F:\bf047 worktree player-mute, runs\<name>)
+## Tests (17 Nov 2026, on the released 0.4.7.2 code)
 
 - **fn1**: three clients; peer talks a 440 Hz test voice, peer2 1000 Hz; the main client records what it hears
   (BF_DEV_VOICE_OUT; no real microphone or speakers). Y on the game's scoreboard muted peer2 at 28.7 s into the
@@ -84,7 +84,7 @@ The mutes themselves are only in `muted-players.txt` (delete a line, or the file
   unmuted, muted and unmuted peer2; the prompt reads "F MUTE / UNMUTE".
 - **pz1**: our pause's Scoreboard: X (controller) muted two players, F (keyboard) unmuted one; prompts X MUTE and the
   F key, no mute prompt on your own row. **p720**: clicks on another player's speaker there unmuted, muted and muted.
-- **eor2**: the end of round screen with keyboard and mouse and keyboard prompts in a real 1280 x 720 window (this PC
+- **eor2**: the end of round screen with keyboard and mouse and keyboard prompts in a real 1280 x 720 window (the test PC
   runs at 250%, so --window_width=512 --window_height=288): "F MUTE / UNMUTE", "R NEXT INFO SCREEN"; F muted peer2 in
   the match, then unmuted and muted it on the end screen; the speakers and the slash read at 720p as at 3200 x 1800.
 - **Linux, on the ROG Ally** (a developer build from the Ubuntu 22.04 root; backend, host, server and three clients on
