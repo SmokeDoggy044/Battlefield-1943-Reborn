@@ -23,6 +23,17 @@
 
 #include "server_list.h"  // JsonField; winsock2.h
 
+#if !defined(_WIN32)
+#include <netinet/in.h>
+#include <signal.h>
+#include <spawn.h>
+#include <sys/socket.h>
+#include <sys/wait.h>
+#include <fcntl.h>
+
+extern char** environ;
+#endif
+
 REXCVAR_DECLARE(bool, server);
 REXCVAR_DECLARE(std::string, bf_backend_registry);
 namespace bf1943 {
@@ -39,6 +50,8 @@ struct State {
   fs::path game, user;
 #if defined(_WIN32)
   HANDLE process = nullptr;
+#else
+  pid_t pid = 0;
 #endif
   uint16_t port = 0;
 } g;
@@ -54,7 +67,6 @@ const char* LevelOf(const std::string& key) {
   return "Levels/Wake_island_s";
 }
 
-#if defined(_WIN32)
 // Test runs (BF_LOOPBACK_ONLY=1, tools\run_game.ps1): the match listens on 127.0.0.1 only, as the tests' own sockets,
 // so Windows Firewall never asks on an unattended PC.
 bool LoopbackOnly() {
@@ -65,20 +77,38 @@ bool LoopbackOnly() {
 // A UDP port nothing on this PC holds (18300, else the next nine): a server package's servers may run here too.
 uint16_t FreePort() {
   for (uint16_t port = 18300; port < 18310; ++port) {
+#if defined(_WIN32)
     SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (s == INVALID_SOCKET) return 18300;
     BOOL exclusive = TRUE;
     setsockopt(s, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, reinterpret_cast<const char*>(&exclusive), sizeof(exclusive));
+#else
+    const int s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (s < 0) return 18300;
+#endif
     sockaddr_in a{};
     a.sin_family = AF_INET;
     a.sin_port = htons(port);
     a.sin_addr.s_addr = htonl(LoopbackOnly() ? INADDR_LOOPBACK : INADDR_ANY);
     const bool free = bind(s, reinterpret_cast<const sockaddr*>(&a), sizeof(a)) == 0;
+#if defined(_WIN32)
     closesocket(s);
+#else
+    close(s);
+#endif
     if (free) return port;
   }
   return 18300;
 }
+
+// The server's command line after the program, for both platforms. `quoted`: the value goes in quotes on Windows'
+// one line (paths and names with spaces); Linux passes each as its own argument and needs none.
+struct Arg {
+  std::string flag, value;
+  bool quoted = false;
+};
+
+#if defined(_WIN32)
 
 std::wstring Wide(const std::string& s) {
   if (s.empty()) return {};
@@ -118,6 +148,67 @@ void StopLocked() {
   g.process = nullptr;
   REXLOG_INFO("BF private match: our server stopped");
 }
+
+std::wstring CommandLine(const std::string& exe, const std::vector<Arg>& args) {
+  std::string line = "\"" + exe + "\"";
+  for (const Arg& a : args) {
+    line += " " + a.flag;
+    if (!a.value.empty() || a.quoted) line += "=" + (a.quoted ? "\"" + a.value + "\"" : a.value);
+  }
+  return Wide(line);
+}
+#else
+// This program, as the kernel started it (an AppImage's run copy included: its libraries' path is in the environment
+// we pass on).
+std::string OwnExecutable() {
+  std::error_code ec;
+  const fs::path p = fs::read_symlink("/proc/self/exe", ec);
+  return ec ? std::string() : p.string();
+}
+
+// As Windows' ServerEnvironment: ours without the test settings, plus the server's loopback address.
+std::vector<std::string> ServerEnvironment() {
+  std::vector<std::string> env;
+  for (char** at = environ; at && *at; ++at) {
+    const std::string entry = *at;
+    if (entry.rfind("BF_", 0) == 0 || entry.rfind("SDL_WINDOW_ACTIVATE_WHEN_SHOWN=", 0) == 0) continue;
+    env.push_back(entry);
+  }
+  for (const char* add : {"BF_LOOPBACK_ONLY=1", "BF_LOOPBACK_ADDR=127.0.0.11", "SDL_WINDOW_ACTIVATE_WHEN_SHOWN=0"})
+    env.push_back(add);
+  return env;
+}
+
+bool Running() {
+  if (g.pid <= 0) return false;
+  int status = 0;
+  const pid_t r = waitpid(g.pid, &status, WNOHANG);
+  if (r == 0) return true;
+  if (r == g.pid) {
+    REXLOG_INFO("BF private match: our server ended ({} {})", WIFSIGNALED(status) ? "signal" : "exit code",
+                WIFSIGNALED(status) ? WTERMSIG(status) : WEXITSTATUS(status));
+    g.pid = 0;
+  }
+  return false;
+}
+
+// SIGTERM, up to 5 s (as Windows' wait), then SIGKILL; always reaped.
+void StopLocked() {
+  if (g.pid <= 0) return;
+  kill(g.pid, SIGTERM);
+  for (int i = 0; i < 50; ++i) {
+    if (waitpid(g.pid, nullptr, WNOHANG) == g.pid) {
+      g.pid = 0;
+      REXLOG_INFO("BF private match: our server stopped");
+      return;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+  kill(g.pid, SIGKILL);
+  waitpid(g.pid, nullptr, 0);
+  g.pid = 0;
+  REXLOG_INFO("BF private match: our server stopped (killed after 5 s)");
+}
 #endif
 
 std::string Clean(const std::string& s) {
@@ -134,7 +225,6 @@ void NotePrivateMatchPaths(const fs::path& game, const fs::path& user) {
 }
 
 bool StartPrivateMatch(const PrivateMatchOptions& o, std::string* why) {
-#if defined(_WIN32)
   std::lock_guard lock(g.mutex);
   StopLocked();
   if (g.game.empty() || g.user.empty()) {
@@ -145,8 +235,19 @@ bool StartPrivateMatch(const PrivateMatchOptions& o, std::string* why) {
   fs::create_directories(MatchDir() / "user", ec);
   fs::remove(MatchDir() / "status.json", ec);
   fs::remove(MatchDir() / "user" / "current_map.txt", ec);
-  wchar_t exe[MAX_PATH * 2] = {};
-  GetModuleFileNameW(nullptr, exe, DWORD(std::size(exe)));
+#if defined(_WIN32)
+  wchar_t exe_w[MAX_PATH * 2] = {};
+  GetModuleFileNameW(nullptr, exe_w, DWORD(std::size(exe_w)));
+  const std::string exe = fs::path(exe_w).string();
+  const uint32_t own_pid = GetCurrentProcessId();
+#else
+  const std::string exe = OwnExecutable();
+  if (exe.empty()) {
+    if (why) *why = "The game could not find its own program to start the server.";
+    return false;
+  }
+  const uint32_t own_pid = uint32_t(getpid());
+#endif
   std::string registry = REXCVAR_GET(bf_backend_registry);
   if (registry.empty()) registry = REXCVAR_GET(bf_online_host) + ":18250";
   if (o.lan) registry = "127.0.0.1:18250";  // the match's own backend, in its own process (lan_backend.cpp)
@@ -163,33 +264,52 @@ bool StartPrivateMatch(const PrivateMatchOptions& o, std::string* why) {
     for (int i = 0; i < 4; ++i) admin_key += fmt::format("{:08x}", uint32_t(rd()));
   }
   world::SetAdminKey(admin_key);
-  std::ostringstream args;
-  args << "\"" << fs::path(exe).string() << "\""
-       << " --game_data_root=\"" << g.game.string() << "\""
-       << " --user_data_root=\"" << (dir / "user").string() << "\""
-       << " --log_file=\"" << (dir / "server.log").string() << "\""
-       << " --fullscreen=false --window_start=hidden --server"
-       << " --cl=\"-dedicated -level " << LevelOf(first) << "\""
-       << " --bf_map_rotation=" << rotation << " --bf_round_end_delay=45"
-       // At the rate this game runs at: its own game joins it without starting again.
-       << " --bf_tick_rate=" << (o.tick ? o.tick : TickRate())
-       << " --bf_gm_backend=" << registry << " --bf_gm_listen=" << (LoopbackOnly() ? "127.0.0.1:" : "0.0.0.0:") << g.port
-       << " --bf_gm_name=\"" << Clean(o.name.empty() ? std::string("Private match") : o.name) << "\""
-       // Never in a test run: the router is the PC owner's (and a loopback host has nothing to forward).
-       // Hosted from a player's game: said in the description's first words (server_list.h kPlayerHostTag).
-       << " --bf_gm_description=\"[player host]\""
-       << " --bf_gm_listed=" << (o.listed && !o.lan ? "true" : "false") << " --bf_gm_upnp=" << (o.upnp && !o.lan && !LoopbackOnly() ? "true" : "false")
-       << (o.lan ? " --bf_lan_backend=true" : "")
-       << (o.password.empty() ? std::string() : " --bf_gm_password=\"" + Clean(o.password) + "\"")
-       << " --bf_world_day_night=" << (o.day_night ? "true" : "false") << " --bf_world_time=" << o.time
-       << " --bf_world_day_minutes=" << o.day_minutes << " --bf_world_cloud_cover=" << o.cloud_cover
-       << " --bf_world_cloud_rate=" << o.cloud_rate << " --bf_world_weather=" << o.weather
-       << " --bf_world_fog=" << o.fog << " --bf_world_ground_fog=" << o.ground_fog << " --bf_world_wind=" << o.wind
-       << " --bf_world_cloud_height=" << o.cloud_height
-       << " --bf_world_admin_key=" << admin_key
-       << " --bf_gm_status_file=\"" << (dir / "status.json").string() << "\""
-       << " --bf_gm_parent_pid=" << GetCurrentProcessId();
-  std::wstring command = Wide(args.str());
+  std::vector<Arg> args = {
+      {"--game_data_root", g.game.string(), true},
+      {"--user_data_root", (dir / "user").string(), true},
+      {"--log_file", (dir / "server.log").string(), true},
+      {"--fullscreen", "false"},
+      {"--window_start", "hidden"},
+      {"--server", ""},
+      {"--cl", std::string("-dedicated -level ") + LevelOf(first), true},
+      {"--bf_map_rotation", rotation},
+      {"--bf_round_end_delay", "45"},
+      // At the rate this game runs at: its own game joins it without starting again.
+      {"--bf_tick_rate", std::to_string(o.tick ? o.tick : TickRate())},
+      {"--bf_gm_backend", registry},
+      {"--bf_gm_listen", (LoopbackOnly() ? "127.0.0.1:" : "0.0.0.0:") + std::to_string(g.port)},
+      {"--bf_gm_name", Clean(o.name.empty() ? std::string("Private match") : o.name), true},
+      // Never in a test run: the router is the PC owner's (and a loopback host has nothing to forward).
+      // Hosted from a player's game: said in the description's first words (server_list.h kPlayerHostTag).
+      {"--bf_gm_description", "[player host]", true},
+      {"--bf_gm_listed", o.listed && !o.lan ? "true" : "false"},
+      {"--bf_gm_upnp", o.upnp && !o.lan && !LoopbackOnly() ? "true" : "false"},
+  };
+  if (o.lan) args.push_back({"--bf_lan_backend", "true"});
+  if (!o.password.empty()) args.push_back({"--bf_gm_password", Clean(o.password), true});
+  const auto number = [](float v) {  // as a stream writes it (the command line before Linux hosting)
+    std::ostringstream out;
+    out << v;
+    return out.str();
+  };
+  for (Arg a : std::initializer_list<Arg>{
+           {"--bf_world_day_night", o.day_night ? "true" : "false"},
+           {"--bf_world_time", number(o.time)},
+           {"--bf_world_day_minutes", number(o.day_minutes)},
+           {"--bf_world_cloud_cover", number(o.cloud_cover)},
+           {"--bf_world_cloud_rate", number(o.cloud_rate)},
+           {"--bf_world_weather", number(o.weather)},
+           {"--bf_world_fog", number(o.fog)},
+           {"--bf_world_ground_fog", number(o.ground_fog)},
+           {"--bf_world_wind", number(o.wind)},
+           {"--bf_world_cloud_height", number(o.cloud_height)},
+           {"--bf_world_admin_key", admin_key},
+           {"--bf_gm_status_file", (dir / "status.json").string(), true},
+           {"--bf_gm_parent_pid", std::to_string(own_pid)},
+       })
+    args.push_back(std::move(a));
+#if defined(_WIN32)
+  std::wstring command = CommandLine(exe, args);
   std::wstring environment = ServerEnvironment();
   const std::wstring work = fs::path(exe).parent_path().wstring();
   STARTUPINFOW si{};
@@ -206,21 +326,42 @@ bool StartPrivateMatch(const PrivateMatchOptions& o, std::string* why) {
   }
   CloseHandle(pi.hThread);
   g.process = pi.hProcess;
-  REXLOG_INFO("BF private match: our server started (PID {}, maps {}, UDP {}{})", pi.dwProcessId, rotation, g.port,
+  const uint32_t server_pid = pi.dwProcessId;
+#else
+  std::vector<std::string> argv_text = {exe};
+  for (const Arg& a : args) argv_text.push_back(a.value.empty() && !a.quoted ? a.flag : a.flag + "=" + a.value);
+  std::vector<std::string> env_text = ServerEnvironment();
+  std::vector<char*> argv, envp;
+  for (auto& t : argv_text) argv.push_back(t.data());
+  for (auto& t : env_text) envp.push_back(t.data());
+  argv.push_back(nullptr), envp.push_back(nullptr);
+  // In the program's folder (as Windows' working folder), its output to /dev/null (it has its own log file).
+  posix_spawn_file_actions_t actions;
+  posix_spawn_file_actions_init(&actions);
+  posix_spawn_file_actions_addchdir_np(&actions, fs::path(exe).parent_path().c_str());
+  posix_spawn_file_actions_addopen(&actions, STDIN_FILENO, "/dev/null", O_RDONLY, 0);
+  posix_spawn_file_actions_addopen(&actions, STDOUT_FILENO, "/dev/null", O_WRONLY, 0);
+  posix_spawn_file_actions_addopen(&actions, STDERR_FILENO, "/dev/null", O_WRONLY, 0);
+  pid_t pid = 0;
+  const int err = posix_spawn(&pid, exe.c_str(), &actions, nullptr, argv.data(), envp.data());
+  posix_spawn_file_actions_destroy(&actions);
+  if (err != 0) {
+    if (why) *why = fmt::format("The server could not start ({}).", std::strerror(err));
+    REXLOG_WARN("BF private match: the server did not start ({})", std::strerror(err));
+    return false;
+  }
+  g.pid = pid;
+  const uint32_t server_pid = uint32_t(pid);
+#endif
+  REXLOG_INFO("BF private match: our server started (PID {}, maps {}, UDP {}{})", server_pid, rotation, g.port,
               o.lan ? ", a LAN match with its own backend" : o.upnp && !LoopbackOnly() ? ", router port asked" : "");
   return true;
-#else
-  if (why) *why = "Hosting a match needs Windows for now.";
-  return false;
-#endif
 }
 
 void StopPrivateMatch() {
   SetSelfHostedAddress(0, 0);
-#if defined(_WIN32)
   std::lock_guard lock(g.mutex);
   StopLocked();
-#endif
 }
 
 PrivateMatchStatus ReadPrivateMatchStatus() {
@@ -230,6 +371,8 @@ PrivateMatchStatus ReadPrivateMatchStatus() {
     std::lock_guard lock(g.mutex);
 #if defined(_WIN32)
     st.running = g.process && WaitForSingleObject(g.process, 0) == WAIT_TIMEOUT;
+#else
+    st.running = Running();
 #endif
     st.port = g.port;
     file = MatchDir() / "status.json";
@@ -279,13 +422,17 @@ std::string LanAddress() {
 #if defined(_WIN32)
   const SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
   if (s == INVALID_SOCKET) return {};
+#else
+  const int s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  if (s < 0) return {};
+#endif
   std::string out;
   for (const char* target : {"192.168.255.254", "10.255.255.254", "172.31.255.254", "8.8.8.8"}) {
     sockaddr_in to{};
     to.sin_family = AF_INET, to.sin_port = htons(9);
     inet_pton(AF_INET, target, &to.sin_addr);
     sockaddr_in own{};
-    int n = sizeof(own);
+    socklen_t n = sizeof(own);
     char text[32] = {};
     if (connect(s, reinterpret_cast<sockaddr*>(&to), sizeof(to)) != 0 ||
         getsockname(s, reinterpret_cast<sockaddr*>(&own), &n) != 0)
@@ -299,11 +446,12 @@ std::string LanAddress() {
     if (out.empty() || is_private) out = ip;
     if (is_private) break;
   }
+#if defined(_WIN32)
   closesocket(s);
-  return out;
 #else
-  return {};
+  close(s);
 #endif
+  return out;
 }
 
 }  // namespace bf1943

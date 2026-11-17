@@ -324,6 +324,15 @@ class ServerList {
   // The browser is open: ping the servers (until 3 s after it closes); RefreshNow fetches the list again now.
   void WantPings() { want_pings_until_ = Now() + 3.0, Want(); }
   void RefreshNow() { Want(), refresh_now_ = true; }
+  // This run now uses another backend (a server's own: game_menu.cpp UseOwnBackend, a LAN match). The last answer's
+  // version gate was the other backend's: forgotten, so a join until the new list answers asks the reservation only.
+  void BackendChanged() {
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      required_version_.clear();
+    }
+    RefreshNow();
+  }
 
   // Direct connect: the server at host:port (a name is looked up first) if the backend knows it: the game's own
   // backend, or the one whose registry is `registry` (host:port; a server on a backend of its own).
