@@ -233,13 +233,12 @@ static bool ProcmapQueryDisabledByEnvironment() {
   return value && value[0] == '0';
 }
 
-// One descriptor per thread (as pull request 28 had it), closed when the thread ends.
-struct ProcMapsFd {
-  int fd = open("/proc/self/maps", O_RDONLY | O_CLOEXEC);
-  ~ProcMapsFd() {
-    if (fd >= 0) close(fd);
-  }
-};
+// One descriptor per thread, as pull request 28 had it: a plain int opened with open() only. This runs inside the
+// write watch fault handler (a signal handler), so it must stay async signal safe: a thread_local with a destructor
+// registers it through __cxa_thread_atexit, which takes the dynamic loader's lock and allocates, and a game hung
+// that way on the Ally (17 Nov 2026). The descriptor of a thread that ends stays open (one per thread that ever
+// asked; the guest's threads live for the whole run).
+static thread_local int maps_fd = -2;  // -2: not opened yet; -1: open failed
 
 // 1: answered (out_entry filled); 0: no mapping holds the address; -1: not answered, read the file.
 static int ProcmapQueryLookup(uintptr_t addr, LinuxMapEntry& out_entry) {
@@ -249,12 +248,12 @@ static int ProcmapQueryLookup(uintptr_t addr, LinuxMapEntry& out_entry) {
     procmap_query_state.store(-1, std::memory_order_relaxed);
     return -1;
   }
-  static thread_local ProcMapsFd maps;
-  if (maps.fd < 0) return -1;
+  if (maps_fd == -2) maps_fd = open("/proc/self/maps", O_RDONLY | O_CLOEXEC);
+  if (maps_fd < 0) return -1;
   RexProcmapQuery query{};
   query.size = sizeof(query);
   query.query_addr = addr;
-  if (ioctl(maps.fd, kRexProcmapQuery, &query) == 0) {
+  if (ioctl(maps_fd, kRexProcmapQuery, &query) == 0) {
     if (state == 0) procmap_query_state.store(1, std::memory_order_relaxed);
     out_entry.start = static_cast<uintptr_t>(query.vma_start);
     out_entry.end = static_cast<uintptr_t>(query.vma_end);
