@@ -319,14 +319,18 @@ class ResolvedTextures {
   Diligent::IRenderDevice* device_ = nullptr;
   RenderScale scale_, shadow_scale_;
   std::map<Key, ResolvedTexture> textures_;
-  // VertexSource's index: (address, end, texture), by address; as of index_generation_.
+  // VertexSource's index: (address, end, texture), by address; rebuilt when index_dirty_.
   struct Span {
     uint32_t address;
     uint64_t end;
     ResolvedTexture* texture;
   };
   std::vector<Span> index_;
-  uint64_t index_generation_ = 0;
+  bool index_dirty_ = true;
+  // Newest's look-ups, valid while no texture at their address (by its slot in changed_) changed and none was freed.
+  void Changed(uint32_t address) { changed_[(address >> 12) & 1023] = ++generation_; }
+  std::array<uint64_t, 1024> changed_{};
+  uint64_t freed_generation_ = 0;
   struct NewestFound {
     uint32_t address = 0;
     uint32_t cube = 0;
