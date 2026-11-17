@@ -13,6 +13,9 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#else
+#include <sys/uio.h>
+#include <unistd.h>
 #endif
 
 namespace bf1943::dev {
@@ -26,9 +29,17 @@ inline bool GuestReadable(const uint8_t* base, uint32_t address, uint32_t size) 
     return false;
   return static_cast<const uint8_t*>(mbi.BaseAddress) + mbi.RegionSize >= p + size;
 #else
-  (void)base;
-  (void)address;
-  (void)size;
+  // Linux: a read through process_vm_readv of our own process fails (EFAULT) on a page that is not mapped or not
+  // readable instead of faulting, so it is safe here and in signal handlers. One byte of each page in the range.
+  static const uintptr_t page = static_cast<uintptr_t>(sysconf(_SC_PAGESIZE));
+  const uintptr_t first = reinterpret_cast<uintptr_t>(base + address);
+  const uintptr_t last = first + (size ? size - 1 : 0);
+  for (uintptr_t p = first & ~(page - 1); p <= last; p += page) {
+    uint8_t byte;
+    iovec local{&byte, 1};
+    iovec remote{reinterpret_cast<void*>(p < first ? first : p), 1};
+    if (process_vm_readv(getpid(), &local, 1, &remote, 1, 0) != 1) return false;
+  }
   return true;
 #endif
 }
