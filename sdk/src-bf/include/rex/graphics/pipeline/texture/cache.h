@@ -627,6 +627,14 @@ class TextureCache {
   // Bit vector with bits reset on fetch constant writes to avoid parsing fetch
   // constants again and again.
   uint32_t texture_bindings_in_sync_ = 0;
+  struct BindingInfo {
+    std::array<uint32_t, 6> fetch{};
+    TextureKey key;
+    uint32_t host_swizzle = 0;
+    uint8_t swizzled_signs = 0;
+    bool valid = false;
+  };
+  std::array<BindingInfo, 256> binding_infos_{};
 };
 
 }  // namespace rex::graphics

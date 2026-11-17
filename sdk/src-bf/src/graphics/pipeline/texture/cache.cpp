@@ -509,7 +509,19 @@ void TextureCache::RequestTextures(uint32_t used_texture_mask) {
     xenos::xe_gpu_texture_fetch_t fetch = regs.GetTextureFetch(index);
     TextureKey old_key = binding.key;
     uint8_t old_swizzled_signs = binding.swizzled_signs;
-    BindingInfoFromFetchConstant(fetch, binding.key, &binding.swizzled_signs);
+    std::array<uint32_t, 6> words;
+    std::memcpy(words.data(), &fetch, sizeof(words));
+    uint32_t hash = 0;
+    for (uint32_t word : words) hash = (hash ^ word) * UINT32_C(0x9E3779B1);
+    BindingInfo& info = binding_infos_[hash >> 24];
+    if (!info.valid || info.fetch != words) {
+      info.fetch = words;
+      BindingInfoFromFetchConstant(fetch, info.key, &info.swizzled_signs);
+      if (info.key.is_valid) info.host_swizzle = GuestToHostSwizzle(fetch.swizzle, GetHostFormatSwizzle(info.key));
+      info.valid = true;
+    }
+    binding.key = info.key;
+    binding.swizzled_signs = info.swizzled_signs;
     texture_bindings_in_sync_ |= index_bit;
     if (!binding.key.is_valid) {
       if (old_key.is_valid) {
@@ -519,7 +531,7 @@ void TextureCache::RequestTextures(uint32_t used_texture_mask) {
       continue;
     }
     uint32_t old_host_swizzle = binding.host_swizzle;
-    binding.host_swizzle = GuestToHostSwizzle(fetch.swizzle, GetHostFormatSwizzle(binding.key));
+    binding.host_swizzle = info.host_swizzle;
     // Testing aid: REX_DEV_DEPTH_FETCH=one|zero makes every k_24_8 fetch return that constant (shadow tests).
     static const int dev_depth_fetch = [] {
       const char* v = std::getenv("REX_DEV_DEPTH_FETCH");

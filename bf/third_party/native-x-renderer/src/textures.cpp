@@ -255,7 +255,19 @@ ISampler* Textures::Sampler(const xenos::xe_gpu_texture_fetch_t& fetch,
   SamplerKept& kept = samplers_kept_[(filters * UINT32_C(0x9E3779B1)) >> 25];
   if (!kept.sampler || kept.key[6] != filters || kept.key[7] != bias || kept.key[8] != anisotropy ||
       std::memcmp(kept.key.data(), &fetch, sizeof(fetch))) {
-    kept.sampler = FindSampler(fetch, binding, lod_bias, point);
+    std::array<uint32_t, 9> key;
+    std::memcpy(key.data(), &fetch, sizeof(fetch));
+    key[1] = (key[1] & 0xFFF) | uint32_t(!(fetch.base_address & 0x1FFFF)) << 12;
+    key[5] = (key[5] & 0xFFF) | uint32_t(!(fetch.mip_address & 0x1FFFF)) << 12;
+    key[6] = filters, key[7] = bias, key[8] = anisotropy;
+    uint32_t hash = 0;
+    for (uint32_t word : key) hash = (hash ^ word) * UINT32_C(0x9E3779B1);
+    SamplerKept& state = sampler_states_[hash >> 24];
+    if (!state.sampler || state.key != key) {
+      state.sampler = FindSampler(fetch, binding, lod_bias, point);
+      state.key = key;
+    }
+    kept.sampler = state.sampler;
     std::memcpy(kept.key.data(), &fetch, sizeof(fetch));
     kept.key[6] = filters, kept.key[7] = bias, kept.key[8] = anisotropy;
   }

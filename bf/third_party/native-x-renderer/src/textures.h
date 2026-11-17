@@ -132,6 +132,7 @@ class Textures {
     Diligent::ISampler* sampler = nullptr;
   };
   std::array<SamplerKept, 128> samplers_kept_{};
+  std::array<SamplerKept, 256> sampler_states_{};
   void Count(uint8_t kind);
 
   Diligent::IRenderDevice* device_ = nullptr;
