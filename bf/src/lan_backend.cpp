@@ -38,9 +38,37 @@ REXCVAR_DEFINE_BOOL(bf_lan_backend, false, "BF1943",
                     "A dedicated server (--server) answers the sign-in and matchmaking itself, for players of its own "
                     "network with no internet (a LAN match: FESL 18241, Theater 18246, the registry 18250)");
 
-#if defined(_WIN32)
+#if !defined(_WIN32)
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <sys/socket.h>
+#include <strings.h>
+#include <cerrno>
+#endif
+
 namespace bf1943 {
 namespace {
+
+// The sockets of both platforms (as gm_host.cpp's). Linux: a send to a player whose game went away must not raise
+// SIGPIPE (it ends the process: the whole match), and TCP ports are taken again at once after a restart.
+#if defined(_WIN32)
+using Socket = SOCKET;
+constexpr Socket kNoSocket = INVALID_SOCKET;
+constexpr int kSendFlags = 0;
+constexpr int kExclusivePort = SO_EXCLUSIVEADDRUSE;
+void CloseSocket(Socket s) { closesocket(s); }
+// A UDP receive that failed for an earlier send's ICMP unreachable (a player whose game closed): not the socket's end.
+bool PassingUdpError() { return WSAGetLastError() == WSAECONNRESET; }
+int CompareNoCase(const char* a, const char* b) { return _stricmp(a, b); }
+#else
+using Socket = int;
+constexpr Socket kNoSocket = -1;
+constexpr int kSendFlags = MSG_NOSIGNAL;
+constexpr int kExclusivePort = SO_REUSEADDR;  // Linux never shares a listening port; this only skips TIME_WAIT
+void CloseSocket(Socket s) { close(s); }
+bool PassingUdpError() { return errno == EINTR || errno == ECONNREFUSED; }
+int CompareNoCase(const char* a, const char* b) { return strcasecmp(a, b); }
+#endif
 
 using Fields = std::vector<std::pair<std::string, std::string>>;
 constexpr uint32_t kRequest = 0xC0000000, kResponse = 0x80000000, kMultiResponse = 0xB0000000, kMultiRequest = 0xF0000000;
@@ -133,7 +161,7 @@ struct Game {
   uint32_t uid = 0, tick = 0;
   int port = 0, players = 0, max_players = 24;
   bool listed = false;
-  SOCKET host = INVALID_SOCKET;  // its registry connection: joiners are announced there
+  Socket host = kNoSocket;  // its registry connection: joiners are announced there
 };
 struct Session {
   std::string persona, xuid;
@@ -154,16 +182,16 @@ std::string RandomBytes(size_t n) {
   return out;
 }
 
-bool SendAll(SOCKET s, const std::string& data) {
+bool SendAll(Socket s, const std::string& data) {
   size_t sent = 0;
   while (sent < data.size()) {
-    const int n = send(s, data.data() + sent, int(data.size() - sent), 0);
+    const int n = send(s, data.data() + sent, int(data.size() - sent), kSendFlags);
     if (n <= 0) return false;
     sent += size_t(n);
   }
   return true;
 }
-bool ReadExactly(SOCKET s, std::string& out, size_t n) {
+bool ReadExactly(Socket s, std::string& out, size_t n) {
   out.resize(n);
   size_t got = 0;
   while (got < n) {
@@ -173,17 +201,17 @@ bool ReadExactly(SOCKET s, std::string& out, size_t n) {
   }
   return true;
 }
-std::string PeerIp(SOCKET s) {
+std::string PeerIp(Socket s) {
   sockaddr_in a{};
-  int n = sizeof(a);
+  socklen_t n = sizeof(a);
   char text[32] = {};
   if (getpeername(s, reinterpret_cast<sockaddr*>(&a), &n) == 0) inet_ntop(AF_INET, &a.sin_addr, text, sizeof(text));
   return text;
 }
 // The address of this PC the player reached us on: the one that works for that player.
-std::string OwnIp(SOCKET s) {
+std::string OwnIp(Socket s) {
   sockaddr_in a{};
-  int n = sizeof(a);
+  socklen_t n = sizeof(a);
   char text[32] = {};
   if (getsockname(s, reinterpret_cast<sockaddr*>(&a), &n) == 0) inet_ntop(AF_INET, &a.sin_addr, text, sizeof(text));
   return *text ? text : "127.0.0.1";
@@ -197,7 +225,7 @@ std::string XnAddrOf(const std::string& ip) {
 
 // One FESL or Theater connection.
 struct Conn {
-  SOCKET s = INVALID_SOCKET;
+  Socket s = kNoSocket;
   bool theater = false;
   std::mutex write;  // the keepalive thread writes too
   std::atomic<bool> open{true};
@@ -253,7 +281,7 @@ void Fesl(Conn& c, const std::string& kind, uint32_t id, const Fields& f) {
       std::string wanted = c.persona;
       for (int n = 2; n < 100; ++n) {
         bool taken = false;
-        for (const auto& [k, s] : g_sessions) taken = taken || _stricmp(s.persona.c_str(), wanted.c_str()) == 0;
+        for (const auto& [k, s] : g_sessions) taken = taken || CompareNoCase(s.persona.c_str(), wanted.c_str()) == 0;
         if (!taken) break;
         wanted = c.persona.substr(0, 13) + std::to_string(n);
       }
@@ -356,7 +384,7 @@ void Theater(Conn& c, const std::string& kind, uint32_t transmission, const Fiel
     const std::string join = "{\"op\": \"join\", \"ticket\": " + JsonQ(ticket) + ", \"pid\": " + std::to_string(pid) +
                              ", \"name\": " + JsonQ(c.name) + ", \"xuid\": " + JsonQ(c.xuid) + ", \"xnaddr\": " +
                              JsonQ(Get(f, "R-XNADDR")) + "}\n";
-    if (g.host != INVALID_SOCKET) {
+    if (g.host != kNoSocket) {
       std::lock_guard lock(g_registry_write);
       SendAll(g.host, join);
     }
@@ -373,7 +401,7 @@ void Theater(Conn& c, const std::string& kind, uint32_t transmission, const Fiel
   }
 }
 
-void ServeConn(SOCKET s, bool theater) {
+void ServeConn(Socket s, bool theater) {
   Conn c;
   c.s = s, c.theater = theater;
   // The game drops a connection silent for four minutes: a ping every 30 s, as EA's servers sent.
@@ -422,7 +450,7 @@ void ServeConn(SOCKET s, bool theater) {
     // The login stays known a while for Theater's USER (the game links after its sign-in); one match's worth of
     // players is no burden, so it is simply kept.
   }
-  closesocket(s);
+  CloseSocket(s);
 }
 
 std::string Listing(const Game& g, const std::string& ip) {
@@ -435,7 +463,7 @@ std::string Listing(const Game& g, const std::string& ip) {
 }
 
 // The registry: our host's registration and the players' menus, a JSON object a line.
-void ServeRegistry(SOCKET s) {
+void ServeRegistry(Socket s) {
   std::string buffer, gid;
   char chunk[2048];
   const std::string peer = PeerIp(s), own = OwnIp(s);
@@ -528,19 +556,19 @@ done:
     g_games.erase(gid);
     REXLOG_INFO("BF LAN backend: the match {} is gone (its host disconnected)", gid);
   }
-  closesocket(s);
+  CloseSocket(s);
 }
 
-SOCKET Listen(uint16_t port) {
-  SOCKET s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-  if (s == INVALID_SOCKET) return s;
-  BOOL yes = TRUE;
-  setsockopt(s, SOL_SOCKET, SO_EXCLUSIVEADDRUSE, reinterpret_cast<const char*>(&yes), sizeof(yes));
+Socket Listen(uint16_t port) {
+  Socket s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+  if (s == kNoSocket) return s;
+  int yes = 1;
+  setsockopt(s, SOL_SOCKET, kExclusivePort, reinterpret_cast<const char*>(&yes), sizeof(yes));
   sockaddr_in a{};
   a.sin_family = AF_INET, a.sin_port = htons(port), a.sin_addr.s_addr = htonl(INADDR_ANY);
   if (bind(s, reinterpret_cast<sockaddr*>(&a), sizeof(a)) != 0 || listen(s, 16) != 0) {
-    closesocket(s);
-    return INVALID_SOCKET;
+    CloseSocket(s);
+    return kNoSocket;
   }
   return s;
 }
@@ -548,17 +576,17 @@ SOCKET Listen(uint16_t port) {
 // At most 64 connections at once on each port (a match has 24 players; the review of pull request 16: a thread a
 // connection with no limit).
 template <typename F>
-void Accept(SOCKET listener, F&& serve) {
+void Accept(Socket listener, F&& serve) {
   std::thread([listener, serve] {
     static std::atomic<int> open{0};
     for (;;) {
-      const SOCKET s = accept(listener, nullptr, nullptr);
-      if (s == INVALID_SOCKET) return;
+      const Socket s = accept(listener, nullptr, nullptr);
+      if (s == kNoSocket) return;
       if (open.load() >= 64) {
-        closesocket(s);
+        CloseSocket(s);
         continue;
       }
-      BOOL yes = TRUE;
+      int yes = 1;
       setsockopt(s, IPPROTO_TCP, TCP_NODELAY, reinterpret_cast<const char*>(&yes), sizeof(yes));
       ++open;
       std::thread([s, serve] {
@@ -571,21 +599,21 @@ void Accept(SOCKET listener, F&& serve) {
 
 // Discovery: a broadcast "BF43LAN?" on UDP 18250 is answered with "BF43LAN!" and the match's line.
 void Discovery() {
-  const SOCKET s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
-  if (s == INVALID_SOCKET) return;
+  const Socket s = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+  if (s == kNoSocket) return;
   sockaddr_in a{};
   a.sin_family = AF_INET, a.sin_port = htons(18250), a.sin_addr.s_addr = htonl(INADDR_ANY);
   if (bind(s, reinterpret_cast<sockaddr*>(&a), sizeof(a)) != 0) {
-    closesocket(s);
+    CloseSocket(s);
     return;
   }
   for (;;) {
     char in[64];
     sockaddr_in from{};
-    int n = sizeof(from);
+    socklen_t n = sizeof(from);
     const int got = recvfrom(s, in, sizeof(in), 0, reinterpret_cast<sockaddr*>(&from), &n);
     if (got < 8 || std::memcmp(in, "BF43LAN?", 8) != 0) {
-      if (got < 0 && WSAGetLastError() != WSAECONNRESET) break;
+      if (got < 0 && !PassingUdpError()) break;
       continue;
     }
     // Only a PC of this network is answered (private, link local or loopback addresses): never a reply to the
@@ -602,7 +630,7 @@ void Discovery() {
     }
     if (out.size() > 8) sendto(s, out.data(), int(out.size()), 0, reinterpret_cast<sockaddr*>(&from), sizeof(from));
   }
-  closesocket(s);
+  CloseSocket(s);
 }
 
 }  // namespace
@@ -613,16 +641,16 @@ bool StartLanBackend() {
   static bool started = false, ok = false;
   if (started) return ok;
   started = true;
-  const SOCKET fesl = Listen(18241), theater = Listen(18246), registry = Listen(18250);
-  if (fesl == INVALID_SOCKET || theater == INVALID_SOCKET || registry == INVALID_SOCKET) {
+  const Socket fesl = Listen(18241), theater = Listen(18246), registry = Listen(18250);
+  if (fesl == kNoSocket || theater == kNoSocket || registry == kNoSocket) {
     REXLOG_ERROR("BF LAN backend: a port is taken (TCP 18241, 18246 or 18250): another backend or LAN match runs on this PC");
-    for (SOCKET s : {fesl, theater, registry})
-      if (s != INVALID_SOCKET) closesocket(s);
+    for (Socket s : {fesl, theater, registry})
+      if (s != kNoSocket) CloseSocket(s);
     return false;
   }
-  Accept(fesl, [](SOCKET s) { ServeConn(s, false); });
-  Accept(theater, [](SOCKET s) { ServeConn(s, true); });
-  Accept(registry, [](SOCKET s) { ServeRegistry(s); });
+  Accept(fesl, [](Socket s) { ServeConn(s, false); });
+  Accept(theater, [](Socket s) { ServeConn(s, true); });
+  Accept(registry, [](Socket s) { ServeRegistry(s); });
   std::thread(Discovery).detach();
   REXLOG_INFO("BF LAN backend: answering sign-in (TCP 18241), matchmaking (18246), the server list (18250) and "
               "discovery (UDP 18250) for this network");
@@ -630,8 +658,3 @@ bool StartLanBackend() {
 }
 
 }  // namespace bf1943
-#else
-namespace bf1943 {
-bool StartLanBackend() { return !REXCVAR_GET(bf_lan_backend); }
-}  // namespace bf1943
-#endif

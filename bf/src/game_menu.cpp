@@ -2993,7 +2993,7 @@ class GameMenu final : public rex::ui::ImGuiDialog {
 #else
     setenv("BF_ONLINE_HOST", host.c_str(), 1);
 #endif
-    list_.RefreshNow();
+    list_.BackendChanged();
     REXLOG_INFO("BF browser: this run is on the backend at {} (a server's own, not the main one)", host);
   }
   void JoinOnOwnBackend(const std::string& host, const ServerInfo& sv) {
