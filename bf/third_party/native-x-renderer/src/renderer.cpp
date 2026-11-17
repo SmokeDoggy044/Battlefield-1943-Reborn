@@ -2784,17 +2784,19 @@ void CaptureDraw(const TrackedCall& tracked, StateTracker& tracker, const uint8_
   // A draw replayed from a recorded command buffer renders into the surfaces bound on the device that runs the
   // buffer, as on the console, where the buffer holds draws and their state but not the render targets (D131). Only
   // when that device has none bound, the ones the recording device had (D129's snapshot).
+  const bool recorded_targets = tracked.replayed && REXCVAR_GET(native_x_renderer_replay_recorded_targets);
   bool bound = false;
-  if (tracked.has_surfaces && !REXCVAR_GET(native_x_renderer_replay_recorded_targets)) {
+  if (!recorded_targets) {
     for (uint32_t i = 0; i < 5; ++i) {
       c.surfaces[i] = ReadBoundSurface(base, tracked.device, i);
       bound |= c.surfaces[i].object != 0;
     }
   }
-  if (tracked.has_surfaces && !bound) {
+  std::array<SurfaceSnapshot, 5> recorded;
+  if (tracked.replayed && !bound && FindRecordedDraw(tracked.begin, recorded)) {
     // The surfaces the recording device had bound for it.
     for (uint32_t i = 0; i < 5; ++i) {
-      const SurfaceSnapshot& r = tracked.surfaces[i];
+      const SurfaceSnapshot& r = recorded[i];
       GuestSurface& s = c.surfaces[i];
       s = {};
       if (!r.object) continue;
@@ -2805,7 +2807,7 @@ void CaptureDraw(const TrackedCall& tracked, StateTracker& tracker, const uint8_
       s.height = r.height;
       s.depth = i == 4;
     }
-  } else if (!tracked.has_surfaces) {
+  } else if (recorded_targets) {
     for (uint32_t i = 0; i < 5; ++i) c.surfaces[i] = ReadBoundSurface(base, tracked.device, i);
   }
   c.programs[0] = tracker.vertex_program_ptr();

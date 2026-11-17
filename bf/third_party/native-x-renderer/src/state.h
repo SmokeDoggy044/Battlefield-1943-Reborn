@@ -144,11 +144,9 @@ struct TrackedCall {
   // new segment has begin > end, or a range much longer than its packets.
   uint32_t begin = 0, end = 0;
   const PacketScan* scan = nullptr;
-  // A draw replayed from a recorded command buffer (LeaveReplay): the surfaces the recording device had bound when it
-  // recorded it (4 color, then depth; object 0 none), as they were then, with has_surfaces; else the device's bound ones
-  // count.
-  bool has_surfaces = false;
-  std::array<SurfaceSnapshot, 5> surfaces{};
+  // A draw replayed from a recorded command buffer (LeaveReplay): FindRecordedDraw has the surfaces the recording device
+  // had bound when it recorded it.
+  bool replayed = false;
 };
 
 // The draws recorded on recording devices (DeviceLayout::recording_flags), by the GPU address range of their packets,
@@ -266,6 +264,7 @@ class StateTracker {
   void Send(uint32_t first_register, const uint8_t* source, uint32_t count);
   // Into record_: a value written by a packet, if it differs from image_.
   void SendValue(uint32_t reg, uint32_t value);
+  struct Direct;
   // The fetch constant dwords packets wrote outside the flush (fetch_override_), as bits: dword i is bit i % 64
   // of word i / 64.
   void SetOverridden(uint32_t dword, bool on) {

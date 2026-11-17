@@ -64,14 +64,15 @@ uint32_t ConstantBase(uint32_t type) {
 // DRAW_INDX (viz query token, then as DRAW_INDX_2) and DRAW_INDX_2 (VGT_DRAW_INITIATOR, then VGT_DMA_BASE
 // and VGT_DMA_SIZE for DMA indices): the command processor writes these registers from the packet
 // (ExecutePacketType3Draw). `p` is the first payload dword, `count` the payload size.
-void ScanDraw(const uint8_t* base, uint32_t opcode, uint32_t p, uint32_t count, PacketScan& out) {
+template <class Sink>
+void ScanDraw(const uint8_t* base, uint32_t opcode, uint32_t p, uint32_t count, PacketScan& out, Sink sink) {
   uint32_t q = p + (opcode == 0x22 ? 4 : 0), q_end = p + 4 * count;
   if (q + 4 <= q_end) {
     uint32_t initiator = Load32(base, q);
-    out.writes.emplace_back(kVgtDrawInitiator, initiator);
+    sink.Write(kVgtDrawInitiator, initiator);
     if (((initiator >> 6) & 3) == 0 && q + 12 <= q_end) {  // source_select kDMA
-      out.writes.emplace_back(kVgtDmaBase, Load32(base, q + 4));
-      out.writes.emplace_back(kVgtDmaSize, Load32(base, q + 8));
+      sink.Write(kVgtDmaBase, Load32(base, q + 4));
+      sink.Write(kVgtDmaSize, Load32(base, q + 8));
     }
   }
   ++out.draws;
@@ -85,12 +86,20 @@ bool SkippedConstants(bool skip_constants, uint32_t reg, uint32_t count) {
                             (reg >= kBoolLoopConstants && reg + count <= kBoolLoopConstants + kBoolLoopDwords));
 }
 
-bool ScannedConstants(const uint8_t* base, uint32_t reg, uint32_t p, uint32_t count, PacketScan& out) {
+struct Collect {
+  PacketScan& out;
+  void Write(uint32_t reg, uint32_t value) { out.writes.emplace_back(reg, value); }
+  void Block(uint32_t reg, const uint32_t* source, uint32_t count) {
+    out.constants.push_back(reg);
+    out.constants.push_back(count);
+    out.constants.insert(out.constants.end(), source, source + count);
+  }
+};
+
+template <class Sink>
+bool ScannedConstants(const uint8_t* base, uint32_t reg, uint32_t p, uint32_t count, Sink sink) {
   if (reg < kFloatConstants || reg + count > kFloatConstants + kFloatDwords) return false;
-  const auto* source = reinterpret_cast<const uint32_t*>(GuestPointer(base, p));
-  out.constants.push_back(reg);
-  out.constants.push_back(count);
-  out.constants.insert(out.constants.end(), source, source + count);
+  sink.Block(reg, reinterpret_cast<const uint32_t*>(GuestPointer(base, p)), count);
   return true;
 }
 
@@ -99,7 +108,8 @@ bool ScannedConstants(const uint8_t* base, uint32_t reg, uint32_t p, uint32_t co
 // A draw packet found inside an INDIRECT_BUFFER (depth 1), with its header's CPU address and the address past it.
 using DrawFound = std::function<void(uint32_t packet, uint32_t packet_end)>;
 
-void ScanPackets(const uint8_t* base, uint32_t begin, uint32_t end, PacketScan& out, int depth,
+template <class Sink>
+void ScanPackets(const uint8_t* base, uint32_t begin, uint32_t end, PacketScan& out, Sink sink, int depth,
                  bool skip_constants, bool copy_microcode, const DrawFound* on_draw = nullptr) {
   uint32_t p = begin;
   while (p + 4 <= end) {
@@ -112,16 +122,16 @@ void ScanPackets(const uint8_t* base, uint32_t begin, uint32_t end, PacketScan& 
         uint32_t reg = header & 0x7FFF;
         bool one = (header >> 15) & 1;
         if (p + 4 * count > end) return void(out.complete = false);
-        if (!SkippedConstants(skip_constants, reg, one ? 1 : count) && (one || !ScannedConstants(base, reg, p, count, out))) {
-          for (uint32_t i = 0; i < count; ++i) out.writes.emplace_back(one ? reg : reg + i, Load32(base, p + 4 * i));
+        if (!SkippedConstants(skip_constants, reg, one ? 1 : count) && (one || !ScannedConstants(base, reg, p, count, sink))) {
+          for (uint32_t i = 0; i < count; ++i) sink.Write(one ? reg : reg + i, Load32(base, p + 4 * i));
         }
         p += 4 * count;
         break;
       }
       case 1:
         if (p + 8 > end) return void(out.complete = false);
-        out.writes.emplace_back(header & 0x7FF, Load32(base, p));
-        out.writes.emplace_back((header >> 11) & 0x7FF, Load32(base, p + 4));
+        sink.Write(header & 0x7FF, Load32(base, p));
+        sink.Write((header >> 11) & 0x7FF, Load32(base, p + 4));
         p += 8;
         break;
       case 2:
@@ -134,7 +144,7 @@ void ScanPackets(const uint8_t* base, uint32_t begin, uint32_t end, PacketScan& 
           // The XDK bin-predicates every draw packet, tiled or not (the GPU runs it in each bin it
           // touches); the draw is the same in every bin.
           ++out.predicated;
-          ScanDraw(base, opcode, p, count, out);
+          ScanDraw(base, opcode, p, count, out, sink);
           if (on_draw && depth > 0) (*on_draw)(p - 4, p + 4 * count);
         } else if (header & 1) {
           ++out.predicated;  // bin-predicated: per tile
@@ -148,15 +158,15 @@ void ScanPackets(const uint8_t* base, uint32_t begin, uint32_t end, PacketScan& 
             case 0x2D: {  // SET_CONSTANT
               uint32_t ot = Load32(base, p);
               uint32_t reg = ConstantBase((ot >> 16) & 0xFF) + (ot & 0x7FF);
-              if (SkippedConstants(skip_constants, reg, count - 1) || ScannedConstants(base, reg, p + 4, count - 1, out)) break;
-              for (uint32_t i = 1; i < count; ++i) out.writes.emplace_back(reg + i - 1, Load32(base, p + 4 * i));
+              if (SkippedConstants(skip_constants, reg, count - 1) || ScannedConstants(base, reg, p + 4, count - 1, sink)) break;
+              for (uint32_t i = 1; i < count; ++i) sink.Write(reg + i - 1, Load32(base, p + 4 * i));
               break;
             }
             case 0x55:    // SET_CONSTANT2
             case 0x56: {  // SET_SHADER_CONSTANTS
               uint32_t reg = Load32(base, p) & 0xFFFF;
-              if (SkippedConstants(skip_constants, reg, count - 1) || ScannedConstants(base, reg, p + 4, count - 1, out)) break;
-              for (uint32_t i = 1; i < count; ++i) out.writes.emplace_back(reg + i - 1, Load32(base, p + 4 * i));
+              if (SkippedConstants(skip_constants, reg, count - 1) || ScannedConstants(base, reg, p + 4, count - 1, sink)) break;
+              for (uint32_t i = 1; i < count; ++i) sink.Write(reg + i - 1, Load32(base, p + 4 * i));
               break;
             }
             case 0x2F: {  // LOAD_ALU_CONSTANT
@@ -192,14 +202,14 @@ void ScanPackets(const uint8_t* base, uint32_t begin, uint32_t end, PacketScan& 
               const uint32_t physical = Load32(base, p) & 0x1FFFFFFFu;
               out.indirect_ranges.emplace_back(physical, physical + 4 * length);
               if (depth == 0) {
-                ScanPackets(base, target, target + 4 * length, out, depth + 1, skip_constants, copy_microcode,
+                ScanPackets(base, target, target + 4 * length, out, sink, depth + 1, skip_constants, copy_microcode,
                             on_draw);
               }
               break;
             }
             case 0x22:  // DRAW_INDX
             case 0x36:  // DRAW_INDX_2
-              ScanDraw(base, opcode, p, count, out);
+              ScanDraw(base, opcode, p, count, out, sink);
               if (on_draw && depth > 0) (*on_draw)(p - 4, p + 4 * count);
               break;
             default:
@@ -308,7 +318,7 @@ void StateTracker::Enter(Call call, uint32_t device, const uint8_t* base, bool n
       if (inside_segment_change) return;
       uint32_t segment_end = Load32(base, outer.device + d.command_buffer_write) + 4;
       if (segment_end >= outer.scan_from && segment_end - outer.scan_from < 0x400000) {
-        ScanPackets(base, outer.scan_from, segment_end, scan_, 0, outer.draw, true);
+        ScanPackets(base, outer.scan_from, segment_end, scan_, Collect{scan_}, 0, outer.draw, true);
         outer.scan_from = segment_end;
       } else {
         scan_.complete = false;
@@ -418,7 +428,7 @@ const TrackedCall* StateTracker::Leave(Call call, const uint8_t* base, bool nest
   // packets (begin != scan_from).
   if (skip_empty_calls_ && !draw && end == p.begin && p.scan_from == p.begin && initialized_) return nullptr;
   if (end >= p.scan_from && end - p.scan_from < 0x400000) {
-    ScanPackets(base, p.scan_from, end, scan_, 0, draw, false);
+    ScanPackets(base, p.scan_from, end, scan_, Collect{scan_}, 0, draw, false);
   } else {
     scan_.complete = false;
   }
@@ -499,12 +509,28 @@ bool FindRecordedDraw(uint32_t address, std::array<SurfaceSnapshot, 5>& surfaces
   RecordedDraws& r = Recorded();
   auto lock = Lock(r);
   auto it = r.by_begin.upper_bound(address);
-  if (it == r.by_begin.begin()) return false;
-  --it;
-  if (address >= it->second.end) return false;
-  surfaces = it->second.surfaces;
+  if (it == r.by_begin.begin() || address >= std::prev(it)->second.end) {
+    g_replay_unmatched.fetch_add(1, std::memory_order_relaxed);
+    return false;
+  }
+  surfaces = std::prev(it)->second.surfaces;
   return true;
 }
+
+struct StateTracker::Direct {
+  StateTracker& tracker;
+  void Write(uint32_t reg, uint32_t value) {
+    if (reg >= rex::graphics::RegisterFile::kRegisterCount) return;
+    if (reg >= kFetchConstants && reg < kFetchConstants + kFetchDwords) {
+      tracker.fetch_override_[reg - kFetchConstants] = value;
+      tracker.SetOverridden(reg - kFetchConstants, true);
+    }
+    tracker.SendValue(reg, value);
+  }
+  void Block(uint32_t reg, const uint32_t* source, uint32_t count) {
+    tracker.Send(reg, reinterpret_cast<const uint8_t*>(source), count);
+  }
+};
 
 const TrackedCall* StateTracker::LeaveReplay(Call call, const uint8_t* base, bool nested,
                                              const std::function<void(const TrackedCall&)>& on_draw) {
@@ -522,17 +548,20 @@ const TrackedCall* StateTracker::LeaveReplay(Call call, const uint8_t* base, boo
     return &last_;
   }
   // Each draw: the packets before it (since the last draw) applied as a call that is not a draw, then the draw.
-  TrackedCall draw_call;
+  Gather(p, call, false, base);
+  scan_.Clear();
+  TrackedCall draw_call{call, true, p.device, 0, 0, &scan_, true};
+  uint64_t draws = 0;
   DrawFound found = [&](uint32_t packet, uint32_t packet_end) {
     Gather(p, call, false, base);
-    draw_call = {call, true, p.device, GpuAddress(packet), GpuAddress(packet_end - 4) + 4, &scan_};
-    draw_call.has_surfaces = FindRecordedDraw(draw_call.begin, draw_call.surfaces);
-    g_replay_draws.fetch_add(1, std::memory_order_relaxed);
-    if (!draw_call.has_surfaces) g_replay_unmatched.fetch_add(1, std::memory_order_relaxed);
+    draw_call.begin = GpuAddress(packet);
+    draw_call.end = GpuAddress(packet_end - 4) + 4;
+    ++draws;
     on_draw(draw_call);
     scan_.Clear();
   };
-  ScanPackets(base, p.scan_from, end, scan_, 0, false, false, &found);
+  ScanPackets(base, p.scan_from, end, scan_, Direct{*this}, 0, false, false, &found);
+  g_replay_draws.fetch_add(draws, std::memory_order_relaxed);
   Gather(p, call, false, base);
   last_ = {call, false, p.device, GpuAddress(p.begin), GpuAddress(end), &scan_};
   return &last_;
@@ -635,13 +664,16 @@ void StateTracker::Gather(const Pending& p, Call call, bool draw, const uint8_t*
   }
 
   for (const auto& [reg, value] : scan_.writes) {
+    if (!draw) {
+      Direct{*this}.Write(reg, value);
+      continue;
+    }
     if (reg >= rex::graphics::RegisterFile::kRegisterCount) continue;
-    if (reg >= kFloatConstants && reg < kFloatConstants + kFloatDwords) {
-      // A draw's float constant writes are its flush, taken from the shadow above (and left out of its scan).
-      if (!draw) SendValue(reg, value);
-    } else if (reg >= kFetchConstants && reg < kFetchConstants + kFetchDwords) {
+    // A draw's float constant writes are its flush, taken from the shadow above (and left out of its scan).
+    if (reg >= kFloatConstants && reg < kFloatConstants + kFloatDwords) continue;
+    if (reg >= kFetchConstants && reg < kFetchConstants + kFetchDwords) {
       uint32_t dw = reg - kFetchConstants;
-      if (!draw || value != shadow(d.fetch_constants + 4 * dw)) {
+      if (value != shadow(d.fetch_constants + 4 * dw)) {
         fetch_override_[dw] = value;
         SetOverridden(dw, true);
       } else {
@@ -649,13 +681,11 @@ void StateTracker::Gather(const Pending& p, Call call, bool draw, const uint8_t*
         // bit was set during the flush (GRAW's flush writes the stream fetch constants and marks them then).
         SetOverridden(dw, false);
       }
-      SendValue(reg, value);
-    } else {
-      SendValue(reg, value);
     }
+    SendValue(reg, value);
   }
   for (size_t i = 0; !draw && i < scan_.constants.size(); i += 2 + scan_.constants[i + 1]) {
-    Send(scan_.constants[i], reinterpret_cast<const uint8_t*>(&scan_.constants[i + 2]), scan_.constants[i + 1]);
+    Direct{*this}.Block(scan_.constants[i], &scan_.constants[i + 2], scan_.constants[i + 1]);
   }
   for (const auto& [reg, value] : scan_.loads) {
     if (reg < rex::graphics::RegisterFile::kRegisterCount) SendValue(reg, value);
