@@ -32,6 +32,9 @@ void VideoSetMuted(bool muted);
 bool VideoShowing();
 // True while the player shows and its video has not ended, paused or failed (the menu music waits meanwhile).
 bool VideoPlaying();
+// True once the player said it failed (no internet or YouTube out of reach, or YouTube refused the video), until
+// the next video or VideoHide.
+bool VideoFailed();
 // Esc pressed while the player had the keyboard (the view takes it on a click): the window's Close. Taken once.
 bool VideoTakeEscape();
 

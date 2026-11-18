@@ -66,8 +66,10 @@
 #include "player_name.h"
 #include "text_filter.h"
 #include "changelog.h"
+#include "http.h"            // the video tutorial's logo and thumbnail (game_menu_tutorial.inc)
 #include "news.h"
 #include "news_video.h"
+#include "picture_decode.h"
 #include "paste_keys.h"  // Ctrl+V and Shift+Insert, the clipboard (the name page, Direct connect)
 #include "report.h"  // Report an issue (game_menu_report.inc)
 #include "update.h"
@@ -1027,7 +1029,7 @@ class GameMenu final : public rex::ui::ImGuiDialog {
       // Quiet while the news' video plays with its sound (game_menu_news.inc); back once it ends or pauses, or the
       // window closes (TekRantGaming, 16 Nov 2026).
       const bool want = our_menus && (Cvar("bf_menu_music") != "false" || dev_music) &&
-                        !(news_open_ && !news_muted_ && news::VideoPlaying());
+                        !(news_open_ && !news_muted_ && news::VideoPlaying()) && !(tutorial_open_ && news::VideoPlaying());
       PlayMenuMusic(UserDir() / "cache" / "extracted" / "music" / "menu.wav", want);
     }
     NotePresence();  // Discord Rich Presence, the menu open or not
@@ -1210,9 +1212,10 @@ class GameMenu final : public rex::ui::ImGuiDialog {
     // news' video (a window of its own) is hidden.
     const bool shader_page = page_ == Page::kShaders;
     if (shader_page && news_open_) news::VideoHide();
+    if (tutorial_open_ && page_ != Page::kSetup) CloseTutorial("the game files page left");
     const bool over_popup =
         !shader_page && (update_popup_ || whats_new_open_ || own_popup_ || tick_popup_ || pw_popup_ || exp_popup_ ||
-                         new_version_popup_ || notice_popup_ || news_open_ || queue_popup_);
+                         new_version_popup_ || notice_popup_ || news_open_ || queue_popup_ || tutorial_open_);
     const Input popup_in = in;
     const bool popup_down = io.MouseDown[0];
     const ImVec2 popup_delta = io.MouseDelta;
@@ -1267,10 +1270,14 @@ class GameMenu final : public rex::ui::ImGuiDialog {
       else if (pw_popup_) PasswordPopup(d, io, popup_in);
       else if (whats_new_open_) WhatsNewPopup(d, io, popup_in);
       else if (news_open_) NewsPopup(d, io, popup_in);
+      else if (tutorial_open_) TutorialPopup(d, io, popup_in);
       // The news' video is a window of its own over ours: hidden while another pop-up is in front of the news.
       if (news_open_ && (update_popup_ || notice_popup_ || new_version_popup_ || own_popup_ || exp_popup_ || tick_popup_ ||
                          pw_popup_ || whats_new_open_))
         news::VideoHide();
+      if (tutorial_open_ && (update_popup_ || notice_popup_ || new_version_popup_ || own_popup_ || exp_popup_ || tick_popup_ ||
+                             pw_popup_ || whats_new_open_ || news_open_ || queue_popup_))
+        news::VideoHide();  // the tutorial's video too
     }
     MenuSounds(sound_before, popup_in, popup_down, popup_delta);
     // The stamp on BF's own menus too: its main menu (and our pages over it) and the pause; never over a match.
@@ -1323,7 +1330,7 @@ class GameMenu final : public rex::ui::ImGuiDialog {
     l.selection = h;
     h = 0xCBF29CE484222325ull;
     for (bool b : {update_popup_, whats_new_open_, whats_new_all_, own_popup_, tick_popup_, pw_popup_, exp_popup_,
-                   new_version_popup_, notice_popup_, news_open_, queue_popup_, quit_popup_, skip_popup_, files_help_, browsing_,
+                   new_version_popup_, notice_popup_, news_open_, tutorial_open_, queue_popup_, quit_popup_, skip_popup_, files_help_, browsing_,
                    browser_typing_, browser_has_players_, browser_not_full_, browser_night_, quick_waiting_ > 0,
                    direct_keys_, direct_letters_, name_keys_})
       HashIn(h, b);
@@ -5557,6 +5564,7 @@ class GameMenu final : public rex::ui::ImGuiDialog {
 #include "game_menu_clan.inc"
 #include "game_menu_home.inc"
 #include "game_menu_news.inc"
+#include "game_menu_tutorial.inc"  // the first start's video tutorial (the news' video player)
 #include "game_menu_report.inc"  // Report an issue, the form that files on GitHub
 #include "game_menu_browser.inc"
 #include "game_menu_progress.inc"  // Stats & Rewards, Leaderboards, Achievements
