@@ -81,7 +81,8 @@ bool Scan(const uint8_t* base, uint32_t head, std::vector<uint8_t>& letter) {
   // Every text the game draws comes through here each frame: nothing is allocated unless the run holds "[Dev]".
   static constexpr uint16_t kTag[5] = {'[', 'D', 'e', 'v', ']'};
   auto name_char = [](uint16_t c) {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
+    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' ||
+           c == 0x2122;  // a soldier name's trademark sign (player_name.h)
   };
   uint16_t last[5] = {};  // the last five characters, oldest first
   uint32_t count = 0;     // characters (as the glyph calls come)

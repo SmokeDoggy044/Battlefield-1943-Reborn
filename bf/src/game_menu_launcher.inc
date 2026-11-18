@@ -937,12 +937,19 @@
   void NameType(char c) {
     if (code_mode_) return CodeType(c);
     if (tag_mode_) return TagType(c);
-    if (int(name_text_.size()) >= kNameMax || !NameChar(c)) return;
+    if (!player_name::CanType(name_text_) || !NameChar(c)) return;
     if (std::isalpha(static_cast<unsigned char>(c)))
       c = name_caps_ ? char(std::toupper(static_cast<unsigned char>(c))) : char(std::tolower(static_cast<unsigned char>(c)));
     name_text_ += c;
     name_error_.clear();
     if (std::isalpha(static_cast<unsigned char>(c)) && name_caps_ && name_text_.size() == 1) name_caps_ = false;
+  }
+  // The trademark sign at the name's end (player_name.h: once, last, its 3 bytes within the 15): typed with Alt+0153,
+  // pasted, or the on screen keys' TM.
+  void NameTypeTm() {
+    if (code_mode_ || tag_mode_ || !player_name::CanTypeTm(name_text_)) return;
+    name_text_ += player_name::kTm;
+    name_error_.clear(), name_caps_ = false;
   }
   // The clipboard's text into the box with the typing, as the keyboard types (TekRantGaming, 16 Nov 2026: a recovery
   // code could only be typed letter by letter). A recovery code replaces its box, spaces and dashes left out; from a
@@ -958,11 +965,16 @@
       name_text_.clear();
     }
     int n = 0;
-    for (char ch : text) {
+    for (size_t i = 0; i < text.size(); ++i) {
+      const char ch = text[i];
+      if (!code_mode_ && !tag_mode_ && text.compare(i, player_name::kTm.size(), player_name::kTm) == 0) {
+        NameTypeTm(), i += player_name::kTm.size() - 1, ++n;
+        continue;
+      }
       if (static_cast<unsigned char>(ch) >= 128 || ch == '\r' || ch == '\n') continue;
       if (code_mode_) CodeType(ch);
       else if (tag_mode_) TagType(ch, true);
-      else if (NameChar(ch) && int(name_text_.size()) < kNameMax) name_text_ += ch, name_error_.clear(), name_caps_ = false;
+      else if (NameChar(ch) && player_name::CanType(name_text_)) name_text_ += ch, name_error_.clear(), name_caps_ = false;
       ++n;
     }
     name_keys_ = false;
@@ -977,7 +989,7 @@
   }
   void NameDelete() {
     if (tag_mode_ && !code_mode_) return TagDelete();
-    if (!name_text_.empty()) name_text_.pop_back();
+    player_name::PopBack(name_text_);
     if (name_text_.empty()) name_caps_ = true;
   }
   void NameRandom() {
@@ -992,7 +1004,7 @@
   // The name in the field saved (false, with the error line saying why, when it cannot be).
   bool NameCommit() {
     const std::string name = name_text_;
-    if (name.size() < 3) {
+    if (player_name::PlainChars(name) < 3) {
       name_error_ = "A name needs 3 to 15 letters, numbers or underscores.";
       return false;
     }
@@ -1308,11 +1320,11 @@
   struct OnKey {
     const char* label;
     char ch;   // the character typed, or 0: a special key (kind)
-    int kind;  // 0 a character, 1 Delete, 2 Capitals, 3 Done
+    int kind;  // 0 a character, 1 Delete, 2 Capitals, 3 Done, 4 the trademark sign (the soldier name's keys only)
     int row, col, span;
   };
-  static const std::vector<OnKey>& OnKeys(bool space) {
-    static const auto make = [](bool with_space) {
+  static const std::vector<OnKey>& OnKeys(bool space, bool tm = false) {
+    static const auto make = [](bool with_space, bool with_tm) {
       std::vector<OnKey> v;
       static const char* kRows[] = {"1234567890", "QWERTYUIOP", "ASDFGHJKL_", "ZXCVBNM"};
       static char labels[40][2] = {};
@@ -1322,7 +1334,12 @@
           labels[n][0] = kRows[r][c];
           v.push_back({labels[n], kRows[r][c], 0, r, c, 1});
         }
-      v.push_back({"DEL", 0, 1, 3, 7, 3});
+      if (with_tm) {  // the soldier name's keys: TM after M, Delete one column narrower (player_name.h)
+        v.push_back({"\xE2\x84\xA2", 0, 4, 3, 7, 1});
+        v.push_back({"DEL", 0, 1, 3, 8, 2});
+      } else {
+        v.push_back({"DEL", 0, 1, 3, 7, 3});
+      }
       if (with_space) {
         v.push_back({"CAPS", 0, 2, 4, 0, 3});
         v.push_back({"SPACE", ' ', 0, 4, 3, 4});
@@ -1333,15 +1350,15 @@
       }
       return v;
     };
-    static const std::vector<OnKey> kPlain = make(false), kSpaced = make(true);
-    return space ? kSpaced : kPlain;
+    static const std::vector<OnKey> kPlain = make(false, false), kSpaced = make(true, false), kName = make(false, true);
+    return space ? kSpaced : tm ? kName : kPlain;
   }
   // The keys drawn with their title at `k0` and `hint` under them; while `open`, the pad moves `key` along the row,
   // and up or down to the key nearest above or below. Returns the key clicked, or pressed with A while open, or -1.
   int OnScreenKeys(ImDrawList* d, const Stage& st, ImVec2 k0, const Input& in, int& key, bool open, bool caps, bool space,
-                   const char* hint) {
+                   const char* hint, bool tm = false) {
     const kit::Fonts& f = kit::GetFonts();
-    const std::vector<OnKey>& keys = OnKeys(space);
+    const std::vector<OnKey>& keys = OnKeys(space, tm);
     const int all = int(keys.size());
     if (key < 0 || key >= all) key = 10;
     kit::Spaced(d, f.typed, st(14), k0, kit::kKhakiText, "ON SCREEN KEYBOARD", st(2));
@@ -1416,7 +1433,10 @@
         if (ch < 128) TagType(char(ch), true), name_keys_ = false;
         continue;
       }
-      if (ch < 128 && NameChar(char(ch)) && int(name_text_.size()) < kNameMax) {
+      if (ch == player_name::kTmCodePoint) {  // Alt+0153, or a keyboard layout's own TM
+        NameTypeTm();
+        name_keys_ = false;
+      } else if (ch < 128 && NameChar(char(ch)) && player_name::CanType(name_text_)) {
         name_text_ += char(ch);
         name_error_.clear(), name_caps_ = false;
         name_keys_ = false;  // a real keyboard types: the on screen keys close, so its Enter saves
@@ -1505,9 +1525,10 @@
       }
       AccountBox(d, st, ImVec2(x, y), w);
     }
-    const std::vector<OnKey>& kOnKeys = OnKeys(false);
+    const std::vector<OnKey>& kOnKeys = OnKeys(false, !code_mode_);
     int clicked = OnScreenKeys(d, st, st.P(846, 150), in, name_key_, name_keys_, name_caps_, false,
-                               "With a keyboard, just type. With a controller, move onto these keys with the D-pad or A.");
+                               "With a keyboard, just type. With a controller, move onto these keys with the D-pad or A.",
+                               !code_mode_);
     StampCorner(d, st);
     const bool pad_accept = in.accept && !enter;
     if (name_keys_) {
@@ -1526,6 +1547,8 @@
         NameDelete();
       } else if (key.kind == 2) {
         name_caps_ = !name_caps_;
+      } else if (key.kind == 4) {
+        NameTypeTm();
       } else {
         NameSave();
         return;
@@ -1561,9 +1584,7 @@
     if (dev_at < 0) dev_at = ImGui::GetTime();
     if (const char* v = std::getenv("BF_DEV_NAME"); v && *v && ImGui::GetTime() - dev_at > 5.0) {
       dev_at = 1e30;
-      name_text_.clear();
-      for (const char* c = v; *c; ++c)
-        if (NameChar(*c)) name_text_ += *c;
+      name_text_ = player_name::Clean(v);
       if (const char* t = std::getenv("BF_DEV_TAG")) {  // BF_DEV_TAG=<tag>: the clan tag box too ("-": emptied)
         tag_text_.clear();
         for (const char* c = t; *c && *c != '-'; ++c) tag_text_ += *c;

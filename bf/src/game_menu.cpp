@@ -63,6 +63,7 @@
 #include "comms.h"
 #include "voice_mute.h"  // the scoreboard's voice mute
 #include "discord_presence.h"
+#include "player_name.h"
 #include "text_filter.h"
 #include "changelog.h"
 #include "news.h"
@@ -5953,13 +5954,7 @@ void ApplyPlayerIdentity(const fs::path& user_dir) {
   settings.path = user_dir / "bf1943-settings.txt";
   settings.Load();
   auto clean = [](std::string name) {
-    std::string out;
-    for (char c : name)
-      if (std::isalnum(static_cast<unsigned char>(c)) || c == ' ' || c == '_') out += c;
-    out.erase(0, out.find_first_not_of(' '));
-    if (out.size() > 15) out.resize(15);
-    while (!out.empty() && out.back() == ' ') out.pop_back();
-    return out;
+    return player_name::Clean(name, true);  // letters, digits, spaces, underscores, and a trademark sign at the end
   };
   std::random_device random;
   bool changed = false;

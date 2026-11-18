@@ -356,7 +356,7 @@ def notice_row(notice):
 
 def leaderboard_put(m, test_progression=False):
     """A player's totals from their game (our Stats & Awards): kept by name, the newest wins, at most 5,000 names."""
-    name = ''.join(c for c in str(m.get('name', '')) if c.isalnum() or c in ' _')[:15].strip()
+    name = player_stats.clean_name(m.get('name', ''))
     if not name:
         return False
     try:
@@ -492,9 +492,13 @@ def name_free_for(name, pid, address=None):
 
 
 def valid_name(name):
-    """A name the game's name page allows: 3 to 15 letters, digits and underscores."""
-    return isinstance(name, str) and 3 <= len(name) <= 15 and all(c.isascii() and (c.isalnum() or c == '_')
-                                                                   for c in name)
+    """A name the game's name page allows: 3 to 15 letters, digits and underscores, and since v0.4.7.4 one trademark
+    sign at its end, all within 15 bytes of UTF-8 (bf/src/player_name.h)."""
+    if not isinstance(name, str):
+        return False
+    core = name[:-1] if name.endswith(player_stats.TM) else name
+    return (3 <= len(core) <= 15 and len(name.encode('utf-8')) <= 15 and
+            all(c.isascii() and (c.isalnum() or c == '_') for c in core))
 
 
 # ---- team names (TEAM_OWNERS, above)
@@ -826,6 +830,24 @@ STAT_DEFAULTS = {'global_kills': os.environ.get('BF_GLOBAL_KILLS', '0.0'), 'pm_m
 REQUEST, RESPONSE = 0xC0000000, 0x80000000
 
 
+def from_wire(text_):
+    """A text field the game sent as UTF-8 bytes (read as Latin-1 by parse_payload) as the text it is: a soldier name's
+    trademark sign (since v0.4.7.4). Anything that is not UTF-8 stays as it was read."""
+    try:
+        return text_.encode('latin-1').decode('utf-8')
+    except UnicodeError:
+        return text_
+
+
+def wire(text_):
+    """Text as the game's bytes: a character Latin-1 has as its one byte (what parse_payload read), any other (a
+    soldier name's trademark sign) as UTF-8, as the game holds it."""
+    try:
+        return text_.encode('latin-1')
+    except UnicodeEncodeError:
+        return b''.join(c.encode('latin-1') if ord(c) < 256 else c.encode('utf-8') for c in text_)
+
+
 def parse_payload(data):
     out = {}
     for line in data.rstrip(b'\0').decode('latin-1').split('\n'):
@@ -839,7 +861,7 @@ def parse_payload(data):
 
 def build(kind, transmission, packet_id, fields):
     lines = ['%s=%s' % (k, '"%s"' % v if ' ' in str(v) else v) for k, v in fields.items()]
-    body = ('\n'.join(lines) + '\0').encode('latin-1')
+    body = wire('\n'.join(lines) + '\0')
     return kind.encode() + struct.pack('>II', (transmission & 0xFF000000) | (packet_id & 0xFFFFFF), HEADER + len(body)) + body
 
 
@@ -971,7 +993,7 @@ class Client:
             # instant login reply closes the dialog before it opens and it then stays up. Real EA servers took
             # seconds, so wait a little (docs/01-online-flow.md).
             await asyncio.sleep(self.args.login_delay)
-            self.persona = f.get('gamertag') or f.get('name') or 'Player%d' % self.user_id
+            self.persona = from_wire(f.get('gamertag') or f.get('name') or '') or 'Player%d' % self.user_id
             # Personas must differ: a host finds a joiner's user by name (sub_82507450), and two consoles with the
             # same gamertag (both "User" in our runs) made the host link the joiner under its own id (run duo10).
             # Only the players online now count: a player who left (or whose game closed) gets their name back.
@@ -1705,7 +1727,7 @@ class Registry:
                                    {'protected': True, 'progress': acct.get('progress', {}),
                                     'progress_text': progress_text(acct.get('progress', {}))})
         if pid:
-            return self.name_reply(''.join(c for c in asked if c.isalnum() or c in ' _')[:15].strip() or 'Soldier',
+            return self.name_reply(player_stats.clean_name(asked) or 'Soldier',
                                    pid, address, {'protected': False})
         return {'op': 'name', 'name': asked}
 
@@ -1903,7 +1925,7 @@ class Registry:
                     writer.write((json.dumps({'op': 'players', 'rows': with_tags(rows[:200])}) + '\n').encode())
                 elif op == 'match_score' and str(m.get('gid', '')) in GAMES:
                     # The pause's Scoreboard: each player's game sends its score in this match.
-                    name = ''.join(c for c in str(m.get('name', '')) if c.isalnum() or c in ' _')[:15].strip()
+                    name = player_stats.clean_name(m.get('name', ''))
                     try:
                         score = int(float(m.get('score', 0)))
                     except (TypeError, ValueError):
@@ -1939,7 +1961,7 @@ class Registry:
                 elif op == 'stats_put':
                     local_test = (self.test_progression and
                                   writer.get_extra_info('peername')[0].startswith('127.'))
-                    name = ''.join(c for c in str(m.get('name', '')) if c.isalnum() or c in ' _')[:15].strip()
+                    name = player_stats.clean_name(m.get('name', ''))
                     if name and protected_by(name):  # a protected name's stats come signed by its account only
                         writer.write((json.dumps({'op': 'stats_put', 'ok': False, 'why': 'protected'}) + '\n').encode())
                     else:
@@ -2061,7 +2083,7 @@ class Registry:
                             writer.write((json.dumps({'op': 'reserved', 'gid': m['gid']}) + '\n').encode())
                             self.note('%s picked game %s%s' % (peer, m['gid'], ' (v%s)' % yours if yours else ''))
                 elif op == 'name':
-                    asked = ''.join(c for c in str(m.get('name', '')) if c.isalnum() or c in ' _')[:15].strip()
+                    asked = player_stats.clean_name(m.get('name', ''))
                     try:
                         pid = int(str(m.get('id', '0')), 16) & 0xFFFFFFFF
                     except ValueError:

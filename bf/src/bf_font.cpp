@@ -326,6 +326,22 @@ bool BfFontReadyNamed(const std::string& name, const fs::path& game_dir, const f
   return f != nullptr;
 }
 
+// The text's characters for the glyph tables (which hold U+2122 too): bytes as they are, a soldier name's trademark
+// sign (UTF-8 E2 84 A2, player_name.h) as the one character 0x2122.
+std::vector<int> CodePoints(const std::string& text) {
+  std::vector<int> out;
+  out.reserve(text.size());
+  for (size_t i = 0; i < text.size(); ++i) {
+    if (text.compare(i, 3, "\xE2\x84\xA2") == 0) {
+      out.push_back(0x2122);
+      i += 2;
+    } else {
+      out.push_back(static_cast<unsigned char>(text[i]));
+    }
+  }
+  return out;
+}
+
 // The width of text in BF's lettering with capitals `cap` pixels high (BF's own rows: 42 at 1800 lines).
 float BfTextWidth(const std::string& text, float cap) {
   const Font* f = Get(kLegacy, g_game_dir, g_user_dir);
@@ -333,7 +349,7 @@ float BfTextWidth(const std::string& text, float cap) {
   const float s = cap / 42.0f * kScaleAt1800;
   float w = 0;
   int prev = -1;
-  for (unsigned char c : text) {
+  for (const int c : CodePoints(text)) {
     auto it = f->glyphs.find(c);
     if (prev >= 0)
       if (auto k = f->kerning.find({prev, c}); k != f->kerning.end()) w += k->second * s * kWide;
@@ -350,7 +366,7 @@ float BfTextWidthNamed(const std::string& name, const std::string& text, float c
   const float s = cap / float(f->cap_rows);
   float w = 0;
   int prev = -1;
-  for (unsigned char c : text) {
+  for (const int c : CodePoints(text)) {
     auto it = f->glyphs.find(c);
     if (prev >= 0)
       if (auto k = f->kerning.find({prev, c}); k != f->kerning.end()) w += k->second * s;
@@ -438,7 +454,7 @@ void BfText(ImDrawList* d, ImVec2 top_left, float cap, ImU32 color, const std::s
   const float y0 = top_left.y - 10.0f * s;
   const float bold = cap / 42.0f * 0.0f, soft = cap / 42.0f * 0.9f;
   int prev = -1;
-  for (unsigned char c : text) {
+  for (const int c : CodePoints(text)) {
     auto it = f->glyphs.find(c);
     if (prev >= 0)
       if (auto k = f->kerning.find({prev, c}); k != f->kerning.end()) x += k->second * s * kWide;
@@ -480,7 +496,7 @@ bool BfTextNamed(const std::string& name, ImDrawList* d, ImVec2 top_left, float 
   float x = top_left.x;
   const float y0 = top_left.y - float(f->cap_top) * s;
   int prev = -1;
-  for (unsigned char c : text) {
+  for (const int c : CodePoints(text)) {
     auto it = f->glyphs.find(c);
     if (prev >= 0)
       if (auto k = f->kerning.find({prev, c}); k != f->kerning.end()) x += k->second * s;

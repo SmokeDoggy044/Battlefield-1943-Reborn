@@ -186,7 +186,8 @@ std::string JsonQuote(const std::string& s) {
   std::string out = "\"";
   for (unsigned char c : s) {
     if (c == '"' || c == '\\') out += '\\', out += char(c);
-    else if (c < 0x20 || c >= 0x7F) out += fmt::format("\\u{:04x}", c);
+    else if (c < 0x20 || c == 0x7F) out += fmt::format("\\u{:04x}", c);
+    else if (c >= 0x80) out += char(c);  // UTF-8 as it is (a soldier name's trademark sign), not read as Latin-1
     else out += char(c);
   }
   return out + "\"";
@@ -415,8 +416,14 @@ class Host {
       // cannot fill the host's list or its log (pull request 20's review, 14 Nov 2026).
       std::string name;
       if (zero != Bytes::npos)
-        for (char c : data.substr(8, std::min<size_t>(zero - 8, 32)))
-          if (static_cast<unsigned char>(c) >= 0x20 && static_cast<unsigned char>(c) < 0x7f) name += c;
+        for (size_t i = 8; i < std::min<size_t>(zero, 40); ++i) {
+          const char c = data[i];
+          if (data.compare(i, 3, "\xE2\x84\xA2") == 0) {  // a soldier name's trademark sign (player_name.h)
+            name += data.substr(i, 3), i += 2;
+          } else if (static_cast<unsigned char>(c) >= 0x20 && static_cast<unsigned char>(c) < 0x7f) {
+            name += c;
+          }
+        }
       const bool right = password.empty() ||
                          (zero != Bytes::npos && data.substr(zero + 1, 16) == bf1943::MatchPasswordHash(password));
       if (right && !password.empty()) {
