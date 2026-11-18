@@ -79,7 +79,8 @@ struct ServerInfo {
   std::string description, next_map;
   // Listed with the Reborn servers: "official" from the backend. A promoted community server (TekRantGaming, 16 Nov
   // 2026: someone else's machine he shows with ours, and can send back to the Community tab) says "promoted" too: it
-  // is on the Reborn tab, marked PROMOTED, and never said to be run by TRG Studios. Reborn(): one of ours.
+  // is on the Reborn tab, marked TRUSTED COMMUNITY SERVER (PROMOTED before 0.4.7.4), and never said to be run by TRG
+  // Studios. Reborn(): one of ours.
   bool official = false;
   bool promoted = false;
   bool Reborn() const { return official && !promoted; }

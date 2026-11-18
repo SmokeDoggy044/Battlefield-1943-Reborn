@@ -21,7 +21,8 @@ updates, the game's files, the logs.
                                                  every server registered with it, community ones too (network
                                                  broadcasts: they tell the players, never restart a server)
     manager.py community                         the community servers registered now, with their host keys
-    manager.py promote <host key> [--note TEXT]  that host's servers listed with the Reborn ones, marked PROMOTED
+    manager.py promote <host key> [--note TEXT]  that host's servers listed with the Reborn ones, marked
+                                                 TRUSTED COMMUNITY SERVER
     manager.py demote <host key> | promoted      back to the Community tab; the promoted list
     manager.py maintenance on --preset deploy [--minutes 15] [--allow ADDRESS]
     manager.py maintenance on --text "Back after the new maps are in" | off | status
@@ -863,7 +864,7 @@ class Manager:
                 # builds' manifests (tools/build_manifest.py) go in the data folder's attest folder at each release.
                 args += ['--check-servers', os.path.join(DATA, 'attest'),
                          '--blocked-file', os.path.join(DATA, 'blocked_servers.json'),
-                         # Promoted community servers (manager.py promote): on the Reborn tab, marked PROMOTED.
+                         # Promoted community servers (manager.py promote): the Reborn tab, Trusted Community Servers.
                          '--promoted-file', PROMOTED_FILE]
             self.backend = spawn(args, output=os.path.join(LOGS, 'backend.out'))
             self.backend_mode = mode
@@ -2082,7 +2083,8 @@ def main():
                    help='official package only: through the main backend to every official server (official), or to '
                         'every server registered with it, community ones too (everyone). Without it: this machine\'s '
                         'own servers, as before')
-    pr = sub.add_parser('promote', help='a community host\'s servers listed with the Reborn ones, marked PROMOTED')
+    pr = sub.add_parser('promote', help='a community host\'s servers listed with the Reborn ones, as a Trusted '
+                                        'Community Server')
     pr.add_argument('key', help='its host key (manager.py community lists them), or the start of it (8 or more)')
     pr.add_argument('--note', default='', help='a note for you (default: its servers\' names)')
     de = sub.add_parser('demote', help='a promoted host back to the Community tab')
@@ -2164,7 +2166,7 @@ def main():
             for r in rows:
                 k = str(r.get('key', '')).lower()
                 now = live.get(k, [])
-                state = ('; now: ' + ', '.join('%s (%s)' % (h['name'], 'shown, PROMOTED' if h.get('promoted') else
+                state = ('; now: ' + ', '.join('%s (%s)' % (h['name'], 'shown as trusted' if h.get('promoted') else
                                                             h.get('hidden') or 'not listed') for h in now)) if now \
                     else '; not registered now'
                 print('%s  since %s  %s%s' % (k, r.get('since', '?'), r.get('note', ''), state))
