@@ -21,6 +21,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <memory>
 #include <algorithm>
 #include <cmath>
 #include <cstdlib>
@@ -31,6 +32,7 @@
 #include <vector>
 
 #include <rex/cvar.h>
+#include <rex/logging.h>
 
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -287,6 +289,46 @@ struct ServerNotice {
   bool active() const { return !text.empty(); }
 };
 
+// The join queue (0.4.7.4; TekRantGaming, 18 Nov 2026: "a server que system with a popup showing you your position in
+// the que that updates there should also be a close button"; server/plasma.py QUEUE). A full server's place: reserve
+// says "queue": 1, and a backend with the queue answers "queued" with a token, the place and how many wait. A backend
+// from before it answers "full" as ever (the SERVER FULL notice).
+struct QueuePlace {
+  std::string gid, token;
+  int position = 0, total = 0;
+};
+
+// The place's watch: asks the backend every 2 s on a thread of its own (its answers take up to 2 s each, so never in
+// the menu's frame) whether the turn has come. Close gives the place up at once (queue_leave); a game that stops
+// asking loses it on the backend after 15 s. A place the backend lost (it started again) is asked for again at the end.
+class QueueWatch {
+ public:
+  enum class State { kIdle, kWaiting, kTurn, kRefused, kNoAnswer };
+  struct Snapshot {
+    State state = State::kIdle;
+    QueuePlace place;
+    ServerNotice refusal;  // kRefused: the backend's words (the server gone, maintenance, its queue full)
+  };
+  ~QueueWatch() { Stop(false); }
+  void Start(const QueuePlace& place);
+  // leave: the place is given up on the backend (sent on a thread of its own; nothing waits for it).
+  void Stop(bool leave);
+  Snapshot Get() {
+    if (!shared_) return {};
+    std::lock_guard<std::mutex> lock(shared_->mutex);
+    return shared_->snap;
+  }
+
+ private:
+  struct Shared {
+    std::mutex mutex;
+    std::atomic<bool> stop{false};
+    Snapshot snap;
+  };
+  static void Run(std::shared_ptr<Shared> s);
+  std::shared_ptr<Shared> shared_;
+};
+
 class ServerList {
  public:
   ServerList() {
@@ -370,11 +412,29 @@ class ServerList {
 
   // kOutdated: the backend's version gate refused this game; `required` (if given) gets the version players need.
   // kRefused: refused with words for the player (maintenance, a full server): `refusal` (if given) gets them.
-  enum class Reserved { kYes, kNo, kOutdated, kRefused };
-  Reserved Reserve(const std::string& gid, std::string* required = nullptr, ServerNotice* refusal = nullptr) {
+  // kQueued (with `place`: the game waits in a full server's queue): `place` gets the place.
+  enum class Reserved { kYes, kNo, kOutdated, kRefused, kQueued };
+  static std::string ReserveRequest(const std::string& gid, bool queue) {
+    return "{\"op\": \"reserve\", \"gid\": \"" + gid + "\", " + (queue ? "\"queue\": 1, " : "") + ClientFields() + "}";
+  }
+  static QueuePlace ReadPlace(const std::string& reply, const std::string& gid) {
+    QueuePlace p;
+    p.gid = JsonField(reply, "gid");
+    if (p.gid.empty()) p.gid = gid;
+    p.token = JsonField(reply, "token");
+    p.position = std::atoi(JsonField(reply, "position").c_str());
+    p.total = std::atoi(JsonField(reply, "total").c_str());
+    return p;
+  }
+  Reserved Reserve(const std::string& gid, std::string* required = nullptr, ServerNotice* refusal = nullptr,
+                   QueuePlace* place = nullptr) {
     std::string reply;
-    if (!RegistryRequest("{\"op\": \"reserve\", \"gid\": \"" + gid + "\", " + ClientFields() + "}", reply)) return Reserved::kNo;
+    if (!RegistryRequest(ReserveRequest(gid, place != nullptr), reply)) return Reserved::kNo;
     const std::string op = JsonField(reply, "op");
+    if (op == "queued" && place) {  // a full server's queue (server/plasma.py QUEUE): the place
+      *place = ReadPlace(reply, gid);
+      return Reserved::kQueued;
+    }
     if (op == "outdated") {
       if (required) *required = JsonField(reply, "required");
       return Reserved::kOutdated;
@@ -523,5 +583,81 @@ class ServerList {
   ServerNotice notice_;
   double notice_until_ = 0;
 };
+
+inline void QueueWatch::Start(const QueuePlace& place) {
+  Stop(false);
+  shared_ = std::make_shared<Shared>();
+  shared_->snap.state = State::kWaiting;
+  shared_->snap.place = place;
+  std::thread([s = shared_] { Run(s); }).detach();
+}
+
+inline void QueueWatch::Stop(bool leave) {
+  if (!shared_) return;
+  shared_->stop = true;
+  if (leave) {
+    std::string token;
+    {
+      std::lock_guard<std::mutex> lock(shared_->mutex);
+      token = shared_->snap.place.token;
+    }
+    std::thread([token] {
+      std::string reply;
+      const bool ok = RegistryRequest("{\"op\": \"queue_leave\", \"token\": \"" + token + "\"}", reply);
+      REXLOG_INFO("BF join: the queue's place given up on the backend: {}", ok ? JsonField(reply, "op") : "no answer");
+    }).detach();
+  }
+  shared_.reset();
+}
+
+inline void QueueWatch::Run(std::shared_ptr<Shared> s) {
+  using Clock = std::chrono::steady_clock;
+  auto answered = Clock::now();
+  while (!s->stop) {
+    for (int i = 0; i < 20 && !s->stop; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    if (s->stop) break;
+    QueuePlace place;
+    {
+      std::lock_guard<std::mutex> lock(s->mutex);
+      place = s->snap.place;
+    }
+    std::string reply;
+    bool ok = RegistryRequest("{\"op\": \"queue\", \"gid\": \"" + place.gid + "\", \"token\": \"" + place.token + "\", " +
+                                  ClientFields() + "}",
+                              reply);
+    std::string op = ok ? JsonField(reply, "op") : "";
+    if (op == "queue_lost") {
+      // The backend has no such place (it started again, or this game did not ask for 15 s): asked for again, at the
+      // end of the queue (or straight in, when there is room now).
+      REXLOG_WARN("BF join: the backend lost this game's place in the queue of {}: asked for again", place.gid);
+      reply.clear();
+      ok = RegistryRequest(ServerList::ReserveRequest(place.gid, true), reply);
+      op = ok ? JsonField(reply, "op") : "";
+    }
+    if (s->stop) break;
+    std::lock_guard<std::mutex> lock(s->mutex);
+    if (!ok) {
+      if (Clock::now() - answered > std::chrono::seconds(20)) s->snap.state = State::kNoAnswer;
+      if (s->snap.state != State::kWaiting) break;
+      continue;
+    }
+    answered = Clock::now();
+    if (op == "queued") {
+      s->snap.place = ServerList::ReadPlace(reply, place.gid);
+    } else if (op == "reserved") {
+      if (const std::string gid = JsonField(reply, "gid"); !gid.empty()) s->snap.place.gid = gid;
+      s->snap.state = State::kTurn;
+      break;
+    } else {
+      // Gone, maintenance, its queue full: the backend's words; anything else without words is said as gone.
+      const std::string text = JsonField(reply, "message");
+      s->snap.refusal = {op, JsonField(reply, "title"),
+                         text.empty() ? "The server could not be joined. Pick another server." : text};
+      if (s->snap.refusal.title.empty()) s->snap.refusal.title = "COULD NOT JOIN";
+      s->snap.state = State::kRefused;
+      break;
+    }
+  }
+}
 
 }  // namespace bf1943

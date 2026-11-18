@@ -3930,7 +3930,8 @@
   // notes since that version, the build counted as the changelog's newest one (a developer build's own version has
   // no notes).
   void WhatsNewTick() {
-    if (!whats_new_pending_ || whats_new_open_ || update_popup_ || quit_popup_ || steam_ask_ || steam_job_ || notice_popup_)
+    if (!whats_new_pending_ || whats_new_open_ || update_popup_ || quit_popup_ || steam_ask_ || steam_job_ || notice_popup_ ||
+        queue_popup_)
       return;
     std::string current = BfVersion();
 #if defined(BF_DEV_TOOLS)
@@ -4118,7 +4119,8 @@
     const Stage st = StageOf(io);
     const kit::Fonts& f = kit::GetFonts();
     d->AddRectFilled(ImVec2(0, 0), io.DisplaySize, IM_COL32(10, 12, 8, 190));
-    const bool full = notice_shown_.kind == "full";
+    // A refusal of this one join (a full server, one gone while its queue waited) or maintenance mode's (any other kind).
+    const bool full = notice_shown_.kind == "full" || notice_shown_.kind == "gone";
     const std::string eyebrow = full ? "THE SERVER LIST \xC2\xB7 COULD NOT JOIN" : "THE SERVER LIST \xC2\xB7 SERVERS CLOSED";
     const std::string foot = full ? "" : "New joins are closed for now. Players already in a match play on.";
     const float w = st(560);
