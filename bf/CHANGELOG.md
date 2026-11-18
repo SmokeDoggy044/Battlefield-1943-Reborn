@@ -18,6 +18,8 @@
   moves up, and a Close button to leave it. You join by yourself when your turn comes. The server browser shows each
   server's queue and offers Join Queue on a full one.
 - **Rebuild shaders,** in Settings, Graphics: deletes your saved shaders and builds them again at the next start.
+- **Five vehicle achievements,** on either side: Steel Behemoth (a tank), Road Warrior (a jeep), Naval Warfare (a
+  boat), Air Superiority (a fighter plane) and Death From Above (call in the bombers from an air raid bunker).
 - **A new achievement sound,** made on your PC from the Battlefield theme in your own game files.
 - **Watch video tutorial.** The first screen that asks for your game files has a button that plays our setup video
   right in the launcher.
