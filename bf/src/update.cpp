@@ -694,6 +694,24 @@ void CleanUpAfterUpdate() {
 #endif
 }
 
+bool RequestShaderRebuild(const fs::path& cache_root) {
+  std::error_code ec;
+  fs::create_directories(cache_root, ec);
+  std::ofstream f(cache_root / "shaders-version.txt", std::ios::trunc);
+  f << "rebuild\n";
+  const bool ok = bool(f);
+  REXLOG_INFO("BF shaders: a rebuild asked for in Settings{}: the next start deletes the shader cache and builds it again",
+              ok ? "" : " (the marker could not be written)");
+  return ok;
+}
+
+bool ShaderRebuildRequested(const fs::path& cache_root) {
+  std::ifstream f(cache_root / "shaders-version.txt");
+  std::string line;
+  std::getline(f, line);
+  return line.rfind("rebuild", 0) == 0;
+}
+
 bool PrepareShadersAfterUpdate(const fs::path& cache_root, const std::string& prepared_for) {
   // Every update deletes the player's shaders and builds a fresh set, without exception (TekRantGaming, 16 Nov 2026:
   // "make sure if the game is updated it removes it shader chashe and builds a fresh batch of shaders"; 17 Nov 2026,

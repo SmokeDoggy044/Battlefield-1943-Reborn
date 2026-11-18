@@ -83,6 +83,12 @@ void CleanUpAfterUpdate();
 // (shaders-version.txt) names another version or none, even with the settings' marker lost. A page left before its
 // end goes on at the next start over what this version had made by then.
 bool PrepareShadersAfterUpdate(const std::filesystem::path& cache_root, const std::string& prepared_for);
+// Settings > Graphics > Rebuild shaders (TekRantGaming, 18 Nov 2026): the cache's marker set to "rebuild", so the next
+// start deletes the whole shader cache (PrepareShadersAfterUpdate: a marker of another version) and the shader page
+// builds it again. Nothing is deleted now: the renderer has its storage open while the game runs. True when written.
+bool RequestShaderRebuild(const std::filesystem::path& cache_root);
+// Whether a rebuild is waiting for the next start.
+bool ShaderRebuildRequested(const std::filesystem::path& cache_root);
 // True when version a ("0.2.1") is newer than b. A version with a suffix comes before the same numbers without one
 // (0.2.0-preview < 0.2.0); suffixes with numbers count up (0.2.0-beta.2 < 0.2.0-beta.3). A hotfix is a fourth number:
 // 0.4.5 < 0.4.5.1 < 0.4.5.10 < 0.4.5.11 < 0.4.6.

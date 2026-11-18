@@ -129,6 +129,7 @@ REXCVAR_DEFINE_STRING(bf_upscaler_mode, "quality", "BF1943",
 REXCVAR_DECLARE(bool, bf_unlock_fps);  // frame_rate.cpp
 REXCVAR_DECLARE(bool, bf_flag_letters);  // capture_points.cpp: letters in the capture point flags (Enhancements)
 REXCVAR_DECLARE(bool, server);         // server_mode.cpp: a dedicated server has no menu
+REXCVAR_DECLARE(std::string, cache_root);  // the runtime's: the shader cache's folder (empty: user\cache)
 REXCVAR_DECLARE(double, bf_max_fps);
 REXCVAR_DECLARE(bool, native_x_renderer);  // NativeXRenderer: its own shader storage is made before the first draw
 REXCVAR_DECLARE(bool, native_x_renderer_fill_screen);  // NativeXRenderer: ultrawide fill (Aspect ratio row)
@@ -4106,6 +4107,24 @@ class GameMenu final : public rex::ui::ImGuiDialog {
                           "native_grass_radius",
                           {{"Low", "45.000000"}, {"Medium", "90.000000"}, {"High", "180.000000"},
                            {"Extreme", "360.000000"}, {"Full map", "1440.000000"}}));
+    // Rebuild shaders (TekRantGaming, 18 Nov 2026: players fixed black bars and black textures by deleting the shader
+    // cache by hand): the whole cache deleted at the next start and the shader page builds it again (update.cpp).
+    {
+      const fs::path cache = REXCVAR_GET(cache_root).empty() ? UserDir() / "cache" : fs::path(REXCVAR_GET(cache_root));
+      const bool waiting = update::ShaderRebuildRequested(cache);
+      SettingRow rebuild{"Shaders", "Rebuild shaders",
+                         "Deletes the game's saved shaders and builds them all again the next time the game starts, "
+                         "behind the shader screen. Use it if you see black textures, black bars or other drawing "
+                         "faults. Applies at the next start."};
+      rebuild.value = waiting ? "At the next start" : "Rebuild";
+      rebuild.activate = [this, cache] {
+        if (update::RequestShaderRebuild(cache)) {
+          settings_.values["shaders_prepared_for"] = "";  // the shader page shows at the next start
+          settings_.Save();
+        }
+      };
+      rows.push_back(rebuild);
+    }
     return rows;
   }
 
