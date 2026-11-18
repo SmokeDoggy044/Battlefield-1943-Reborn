@@ -191,12 +191,7 @@
         <progress id="up-progress" max="100" value="0" style="display:none;margin-top:12px"></progress>
         <div class="row" style="margin-top:14px"><button class="btn" id="up-check">Check now</button><button class="btn go" id="up-apply" disabled>Update now</button></div>
       </div>
-      <div class="paper">
-        <h3>Automatic updates</h3>
-        <label class="check"><input type="checkbox" id="auto-update"><span>Install new releases by themselves<br><small id="auto-note">Checked every half hour.</small></span></label>
-        <label class="field" style="max-width:340px"><span>Warn players this long before the restart</span><select id="warn-minutes"></select></label>
-        <div class="row"><button class="btn go" id="save-updates">Save</button></div>
-      </div>
+      <p class="hint" id="auto-state" style="margin-top:12px"></p>
     </section>
 
     <section id="game">
@@ -226,6 +221,13 @@
         <label class="check" id="autostart-box"><input type="checkbox" id="autostart"><span>Start the manager when I sign in to Windows</span></label>
         <div id="systemd-box" style="display:none"><p class="hint">To start the manager with a Linux machine, save this as a systemd user unit (~/.config/systemd/user/bf1943-server.service), then run: systemctl --user enable --now bf1943-server</p><pre id="systemd-unit"></pre></div>
         <div class="row"><button class="btn go" id="save-settings">Save</button></div>
+      </div>
+      <div class="paper">
+        <h3>Automatic updates</h3>
+        <label class="check"><input type="checkbox" id="auto-update"><span>Install new releases by themselves<br><small id="auto-note">Checked every half hour.</small></span></label>
+        <div class="banner" id="auto-off-warn" style="display:none;margin:8px 0 12px">Automatic updates are off. When a new game update comes out, players who have updated may be refused by servers still on the older version. Turn automatic updates back on, or update by hand on the Updates page.</div>
+        <label class="field" style="max-width:340px"><span>Warn players this long before the restart</span><select id="warn-minutes"></select></label>
+        <div class="row"><button class="btn go" id="save-updates">Save</button></div>
       </div>
       <div class="paper">
         <h3>This page from another machine</h3>
@@ -270,6 +272,12 @@
   <p class="hint mono" id="b-path"></p>
   <div class="list" id="b-list"></div>
   <div class="row" style="margin-top:14px"><button class="btn go" id="b-use">Use this folder</button><button class="btn" id="b-cancel">Cancel</button><span class="hint">Click a file to pick it, a folder to open it.</span></div>
+</div></div>
+
+<div class="modal" id="auto-off-modal"><div class="paper" style="width:520px">
+  <h3>Turn off automatic updates?</h3>
+  <p>When a new game update comes out, players who have updated may be refused when they join a server still on the older version. You would have to turn automatic updates back on, or update by hand on the Updates page.</p>
+  <div class="row" style="margin-top:14px"><button class="btn stop" id="auto-off-yes">Turn them off</button><button class="btn go" id="auto-off-no">Keep them on</button></div>
 </div></div>
 
 <div class="modal" id="login-modal"><div class="paper" style="width:420px">
@@ -355,9 +363,10 @@ function render() {
   mode.className = 'pill ' + (running ? 'green' : '');
   // banners
   const newer = s.update.state === 'available' || s.update.state === 'downloaded';
-  sync($('banners'), [s.game_installed, newer, s.update.latest, s.countdowns.map(cd => [cd.id, cd.text])], () => [
+  sync($('banners'), [s.game_installed, newer, s.update.latest, c.auto_update, s.official, s.countdowns.map(cd => [cd.id, cd.text])], () => [
     !s.game_installed && h('div', { class: 'banner' }, 'The game is not installed yet, so no server can start. ', h('a', { href: '#', style: 'color:inherit', onclick: e => { e.preventDefault(); goTab('game'); } }, 'Install it from your own copy on the Game files page.')),
     newer && h('div', { class: 'banner info' }, 'Version ' + s.update.latest + ' is out. ', h('a', { href: '#', style: 'color:inherit', onclick: e => { e.preventDefault(); goTab('updates'); } }, 'Open Updates.')),
+    !c.auto_update && !s.official && s.version !== 'dev' && h('div', { class: 'banner' }, 'Automatic updates are off: players on a newer game may be refused by these servers. ', h('a', { href: '#', style: 'color:inherit', onclick: e => { e.preventDefault(); goTab('settings'); } }, 'Turn them on in Settings.')),
     ...s.countdowns.map(cd => h('div', { class: 'banner info' }, cd.text + (cd.update ? ' The update installs then.' : cd.restart ? ' The server restarts then.' : '')))]);
   renderServers(); renderNetwork(); renderMessages(); renderUpdates(); renderGame(); renderSettings();
   if (!filled) { fillForms(); filled = true; }
@@ -461,6 +470,8 @@ function renderUpdates() {
   $('up-text').textContent = u.text || 'Not looked yet.';
   const p = $('up-progress'); p.style.display = u.state === 'downloading' ? '' : 'none'; p.value = u.progress || 0;
   $('up-apply').disabled = !(u.state === 'available' || u.state === 'downloaded');
+  $('auto-state').textContent = state.official ? '' : 'Automatic updates are ' + (state.config.auto_update ? 'on' : 'off') + '. Change it in Settings.';
+  $('auto-off-warn').style.display = !state.official && !$('auto-update').checked ? '' : 'none';
   $('auto-note').textContent = state.official ? 'Off for official servers: they change only on your word, with Update now.' : 'Checked every half hour. Players are told first, with the Game update released message.';
 }
 function renderGame() {
@@ -610,7 +621,17 @@ $('msg-send').onclick = async () => {
 // ---- updates
 $('up-check').onclick = () => act('/api/update/check', {}, 'Looked');
 $('up-apply').onclick = () => { if (confirm('Install version ' + state.update.latest + '? Players are told first, then your servers restart on it.')) act('/api/update/apply', {}, 'The update is on its way'); };
-$('save-updates').onclick = () => saveConfig({ auto_update: $('auto-update').checked, update_warning_minutes: Number($('warn-minutes').value) }, 'Saved');
+const saveUpdates = () => saveConfig({ auto_update: $('auto-update').checked, update_warning_minutes: Number($('warn-minutes').value) }, 'Saved');
+$('save-updates').onclick = () => {
+  if (!$('auto-update').checked && state.config.auto_update && !state.official) return $('auto-off-modal').classList.add('on');
+  saveUpdates();
+};
+$('auto-update').onchange = () => {
+  $('auto-off-warn').style.display = !state.official && !$('auto-update').checked ? '' : 'none';
+  if (!$('auto-update').checked && state.config.auto_update && !state.official) $('auto-off-modal').classList.add('on');
+};
+$('auto-off-yes').onclick = () => { $('auto-off-modal').classList.remove('on'); saveUpdates(); };
+$('auto-off-no').onclick = () => { $('auto-off-modal').classList.remove('on'); $('auto-update').checked = true; $('auto-off-warn').style.display = 'none'; };
 
 // ---- game files
 $('game-install').onclick = () => { const path = $('game-path').value.trim(); if (!path) return toast('Pick your package or folder first.', true); act('/api/install', { path: path }, 'Installing'); };
