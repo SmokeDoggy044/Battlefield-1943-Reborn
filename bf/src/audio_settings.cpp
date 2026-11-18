@@ -1,6 +1,6 @@
 // Settings > Audio, King Kong's page: Master volume scales every audio frame the game hands the system
 // (XAudioSubmitRenderDriverFrame: 256 samples on 6 channels, big endian floats), so it applies at once to all
-// game audio. Music, effects and voices need the game's own sound groups found first (the menu shows them greyed).
+// game audio. Music, effects and voices use the game's own sound categories (game_options.cpp).
 // XAudioGetVoiceCategoryVolume, the system's volume per voice category, is logged once per category, to see
 // whether the game asks for one (a way to its music volume).
 
