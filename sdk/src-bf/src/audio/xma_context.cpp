@@ -136,10 +136,11 @@ bool XmaContext::Work() {
   }
 
   while (remaining_subframe_blocks_in_output_buffer_ >= minimum_subframe_decode_count) {
+    input_stalled_ = false;
     Decode(&data);
     Consume(&output_rb, &data);
 
-    if (!data.IsAnyInputBufferValid() || data.error_status == 4) {
+    if (!data.IsAnyInputBufferValid() || data.error_status == 4 || input_stalled_) {
       break;
     }
   }
@@ -710,7 +711,11 @@ void XmaContext::Decode(XMA_CONTEXT_DATA* data) {
       const uint8_t* next_packet =
           GetNextPacket(data, next_packet_index, current_input_packet_count);
       if (!next_packet) {
-        data->error_status = 4;
+        // The frame runs on into the other input buffer, which the guest has not made valid yet: wait for it, and go
+        // on from here at the next kick. Not an error: error 4 was never cleared, so every later pass of the stream
+        // decoded one frame only, and EA's XMA decoder in BF1943 (821B0F08) gives a voice up when its first read
+        // after a mid-sound start needs more than that (up to 767 samples): about one sound a minute was cut short.
+        input_stalled_ = true;
         return;
       }
       std::memcpy(input_buffer_.data() + kBytesPerPacketData, next_packet + kBytesPerPacketHeader,
