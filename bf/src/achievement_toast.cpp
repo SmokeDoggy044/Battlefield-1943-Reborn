@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
@@ -24,6 +25,7 @@
 
 #include "launcher_kit.h"
 #include "reborn_achievements.h"
+#include "theme_chime.h"
 
 // Settings > Audio: the popups and the chime's volume.
 REXCVAR_DEFINE_BOOL(bf_achievement_popups, true, "BF1943/Audio", "A popup and a chime when the game unlocks an achievement");
@@ -45,7 +47,8 @@ AchievementToast* g_toast = nullptr;  // the one the app made (CreateAchievement
 float EaseOut(float t) { return 1 - std::pow(1 - std::clamp(t, 0.0f, 1.0f), 3.0f); }
 float EaseIn(float t) { return std::pow(std::clamp(t, 0.0f, 1.0f), 3.0f); }
 
-// ---- the chime: two rising bell notes over a soft low one, with a short echo (King Kong's, kk/src/toast.cpp)
+// ---- the plain chime, when the game's files give none: two rising bell notes over a soft low one, with a short echo
+// (King Kong's, kk/src/toast.cpp)
 
 void PutWavHeader(std::vector<uint8_t>& wav, uint32_t rate, uint16_t channels, uint32_t data_bytes) {
   auto put32 = [&](size_t o, uint32_t v) { std::memcpy(&wav[o], &v, 4); };
@@ -138,7 +141,95 @@ std::vector<uint8_t> LoadOwnWav(const fs::path& file, float volume) {
   return wav;
 }
 
+// ---- the Battlefield theme's chime (theme_chime.h; TekRantGaming, 18 Nov 2026: "the iconic Battlefield tone play
+// as like a kind of esque achievement kind of sound"): made from the menu theme the first start extracted from the
+// player's own game files, and kept beside the menus' other sounds (user\cache\extracted\sounds). Only its recipe
+// ships.
+
+// The first `frames` samples (16 bit stereo at 48 kHz) of `file`; empty with `why` when it is not there or not that.
+std::vector<int16_t> ReadThemeFrames(const fs::path& file, uint32_t frames, const char** why) {
+  auto fail = [&](const char* reason) {
+    *why = reason;
+    return std::vector<int16_t>{};
+  };
+  std::ifstream f(file, std::ios::binary);
+  if (!f) return fail("the menu music is not extracted");
+  uint8_t head[12];
+  if (!f.read(reinterpret_cast<char*>(head), 12) || std::memcmp(head, "RIFF", 4) || std::memcmp(head + 8, "WAVE", 4))
+    return fail("the menu music is not a WAV");
+  bool fmt_ok = false;
+  for (;;) {
+    uint8_t chunk[8];
+    if (!f.read(reinterpret_cast<char*>(chunk), 8)) return fail("the menu music has no sound data");
+    uint32_t len;
+    std::memcpy(&len, chunk + 4, 4);
+    if (!std::memcmp(chunk, "fmt ", 4) && len >= 16) {
+      uint8_t fmt[16];
+      if (!f.read(reinterpret_cast<char*>(fmt), 16)) return fail("the menu music is cut short");
+      uint16_t format, channels, bits;
+      uint32_t rate;
+      std::memcpy(&format, fmt, 2), std::memcpy(&channels, fmt + 2, 2), std::memcpy(&rate, fmt + 4, 4);
+      std::memcpy(&bits, fmt + 14, 2);
+      fmt_ok = format == 1 && channels == 2 && rate == theme_chime::kRate && bits == 16;
+      if (!fmt_ok) return fail("the menu music is not 16 bit stereo at 48 kHz");
+      f.seekg(std::streamoff(len - 16 + (len & 1)), std::ios::cur);
+    } else if (!std::memcmp(chunk, "data", 4)) {
+      if (!fmt_ok) return fail("the menu music has no format");
+      if (uint64_t(frames) * 4 > len) return fail("the menu music is shorter than the cut");
+      std::vector<int16_t> out(size_t(frames) * 2);
+      if (!f.read(reinterpret_cast<char*>(out.data()), std::streamsize(out.size() * 2))) return fail("the menu music is cut short");
+      return out;
+    } else {
+      f.seekg(std::streamoff(len + (len & 1)), std::ios::cur);
+    }
+  }
+}
+
 }  // namespace
+
+bool MakeAchievementChime(const fs::path& extracted) {
+  static std::mutex mutex;  // the first start's worker and an unlock may both ask
+  std::lock_guard lock(mutex);
+  const fs::path made = (extracted / theme_chime::kMade).make_preferred();
+  std::error_code ec;
+  if (fs::exists(made, ec)) return true;
+  if (kit::NoGameArt()) return false;
+  const auto t0 = std::chrono::steady_clock::now();
+  const char* why = nullptr;
+  const std::vector<int16_t> src = ReadThemeFrames((extracted / theme_chime::kSource).make_preferred(), theme_chime::kRecipe.end, &why);
+  if (!src.empty()) {
+    const std::vector<int16_t> pcm = theme_chime::Make(theme_chime::kRecipe, src.data(), src.size() / 2);
+    if (pcm.empty()) {
+      why = "the cut could not be made";
+    } else {
+      std::vector<uint8_t> wav(44 + pcm.size() * 2);
+      PutWavHeader(wav, theme_chime::kRate, 2, uint32_t(pcm.size() * 2));
+      std::memcpy(&wav[44], pcm.data(), pcm.size() * 2);
+      fs::create_directories(made.parent_path(), ec);
+      const fs::path temp = made.string() + ".tmp";
+      {
+        std::ofstream f(temp, std::ios::binary | std::ios::trunc);
+        f.write(reinterpret_cast<const char*>(wav.data()), std::streamsize(wav.size()));
+        if (!f) why = "the file could not be written";
+      }
+      if (!why) {
+        fs::rename(temp, made, ec);
+        if (ec) why = "the file could not be written";
+      }
+      if (!why) {
+        REXLOG_INFO("BF achievements: the chime made from the player's game files, {} ({} ms of sound, in {} ms): {}",
+                    theme_chime::kRecipe.what, 1000ull * (pcm.size() / 2) / theme_chime::kRate,
+                    std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count(),
+                    made.string());
+        return true;
+      }
+      fs::remove(temp, ec);
+    }
+  }
+  static std::set<std::string> said;  // each reason once a run
+  if (said.insert(why).second) REXLOG_WARN("BF achievements: the theme's chime was not made ({}): the plain chime plays", why);
+  return false;
+}
 
 namespace {
 
@@ -350,6 +441,19 @@ void PlayAchievementSound() {
   }
   std::error_code ec;
   std::vector<uint8_t> wav = !own.empty() && fs::exists(own, ec) ? LoadOwnWav(own, volume / 100.0f) : std::vector<uint8_t>{};
+  // The player's own first; then the Battlefield theme's chime from their game files (kept in the cache by the
+  // first start, made now if it is not there yet); then the plain chime.
+  if (wav.empty()) {
+    const fs::path achievements = AchievementCacheDir();
+    if (!achievements.empty() && MakeAchievementChime(achievements.parent_path())) {
+      const fs::path made = (achievements.parent_path() / theme_chime::kMade).make_preferred();
+      wav = LoadOwnWav(made, volume / 100.0f);
+      if (static bool said = false; !said && !wav.empty()) {
+        said = true;
+        REXLOG_INFO("BF achievements: the chime is {} ({})", theme_chime::kRecipe.what, made.string());
+      }
+    }
+  }
   if (wav.empty()) wav = MakeChime(volume / 100.0f);
 #if defined(BF_DEV_TOOLS)
   // BF_DEV_ACHIEVEMENT_WAV=<file> (tests, the PC kept silent): the chime written there in place of played.
