@@ -133,8 +133,28 @@ toast and copies King Kong's behaviour:
 - A paper slip slides in at the top right in 0.35 s, holds for 5 s, then slides out.
 - It shows the achievement's own picture, its name in the game's headline font, its words and its gamerscore.
 - Several unlocks queue one after another.
-- A short chime plays through SDL: King Kong's chime, made at run time. A player's own `user/sounds/achievement.wav`
-  (16 bit PCM) plays in its place.
+- A chime plays through SDL: the Battlefield theme's hook, made from the player's own game files (below). King
+  Kong's plain chime, made at run time, plays when those give none. A player's own `user/sounds/achievement.wav`
+  (16 bit PCM) plays in place of either.
+
+### The chime from the Battlefield theme
+
+TekRantGaming, 18 Nov 2026: "the iconic Battlefield tone play as like a kind of esque achievement kind of sound ...
+when the user provides the game files, we can still accurately recreate this on everyone's systems". No sound
+ships: `bf/src/theme_chime.h` holds a recipe, and the chime is made on the player's PC from the menu music the
+first start extracts from their game files (`user/cache/extracted/music/menu.wav`).
+
+- The cut is the theme's first bar, its hook "Da, da, da-daaa" (0.25 to 2.30 s), played a whole tone up.
+- Before it, a reversed reverb of its first hit swells in, with a run of bells; a bell chord marks the hit.
+- After it, bells play the hook again on the same rhythm over a softer, darker echo of the orchestra's bar. The
+  last note rings into a longer hall and fades out. 5.7 s in all, as long as the popup shows.
+- Everything in `theme_chime.cpp` is integer arithmetic (its own sine, filters, reverbs and bells; no floating
+  point, no libm), so the same game files give the same bytes on every PC, compiler and system.
+- The first start's worker makes it once, after the menu music, into `user/cache/extracted/sounds/achievement-1.wav`
+  (`MakeAchievementChime`); an unlock only reads that file and sets the volume. The number in the name goes up when
+  the recipe changes, so the next start makes the new one.
+- `tools/theme_chime_render.cpp` renders the recipe from an extracted `menu.wav` with the game's own code: to
+  listen to a change, and to compare two builds or systems byte for byte.
 
 The pictures come from the game's title data and are written once to `user/cache/extracted/achievements/<id>.png`.
 
@@ -178,3 +198,4 @@ With the game's 200 G the total is 260 G.
 - Dev switches:
   - `BF_DEV_ACHIEVEMENT_TEST="<s>:<id>,..."` shows a test popup at that time.
   - `BF_DEV_ACHIEVEMENT_WAV=<file>` writes the chime to that file instead of playing it, so tests stay silent.
+  - `BF_DEV_NO_GAME_ART=1` keeps the theme's chime from being made too: the plain chime plays.
