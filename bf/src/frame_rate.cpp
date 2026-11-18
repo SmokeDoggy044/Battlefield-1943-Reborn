@@ -110,29 +110,12 @@ bool LogSetting(const std::string& name) {
 // above 30 needs the frames between ticks drawn from interpolated positions.
 
 // Our menu's frame rate setting, live: 30 locks to the original timing, 0 is no limit.
-// The original timing is one tick a frame, so it is right only at the original 30 ticks a second. At 60 it ran 30
-// ticks a second, half the server's, and the server kept pulling the player back (issue 43, 17 Nov 2026: a player at
-// Frame rate 30 on 60 Hz servers, "BF client ticks: 30.0 a second over 30 s (tick 0.0167 s)"). At any other tick rate
-// 30 is our own limit, as 60 or 90 are, and the game's timer runs as many ticks as the time that passed.
 void SetFrameRate(double fps) {
-  const bool lock = fps == 30 && bf1943::TickRate() == 30;
-  rex::cvar::SetFlagByName("bf_unlock_fps", lock ? "false" : "true");
+  rex::cvar::SetFlagByName("bf_unlock_fps", fps == 30 ? "false" : "true");
   rex::cvar::SetFlagByName("bf_max_fps", std::to_string(fps));
   if (REXCVAR_GET(server)) return;
-  static int logged = -1;  // the last case logged: 0 our limit at 30, 1 the original lock
-  if (fps == 30 && logged != int(lock)) {
-    logged = int(lock);
-    if (lock) REXLOG_INFO("BF frame rate: 30, the original timing (30 ticks a second)");
-    else REXLOG_INFO("BF frame rate: 30 by our limit ({} ticks a second: the original 30 lock would halve them)",
-                     bf1943::TickRate());
-  }
-  if (g_vsync) *REX_KERNEL_MEMORY()->TranslateVirtual<uint8_t*>(g_vsync) = lock ? 1 : 0;
+  if (g_vsync) *REX_KERNEL_MEMORY()->TranslateVirtual<uint8_t*>(g_vsync) = fps == 30 ? 1 : 0;
   if (g_max_fps) StoreFloat(REX_KERNEL_MEMORY()->TranslateVirtual<uint8_t*>(g_max_fps), 0, 0.0f);
-}
-// The tick rate changed before the game's timers were made (tick_rate.cpp, SetTickRate: the server about to be
-// joined): the frame rate's lock decided again for it.
-void FrameRateForTickRate() {
-  if (!REXCVAR_GET(server)) SetFrameRate(REXCVAR_GET(bf_max_fps));
 }
 
 // Windows' timer at 1 ms for the whole process (7 Nov 2026). The runtime turns the game's Sleep(n) into ::Sleep(n)

@@ -44,8 +44,6 @@
 // a restart; 30 is the Xbox 360's, 75 and 100 experimental (the player is warned before joining one).
 // 0.4.6.1 made 30 the default once more; 0.4.6.2 (TekRantGaming, 14 Nov 2026: "update all clients to default back to
 // 60 Hz") 60 again. A server of another rate is still joined by starting the game again at it.
-void FrameRateForTickRate();  // frame_rate.cpp: the frame rate's 30 lock decided again for a new tick rate
-
 REXCVAR_DEFINE_DOUBLE(bf_tick_rate, 60.0, "BF1943",
                       "The game's simulation rate, ticks a second: 60 (the default), 30 (the Xbox 360's), or 75 or 100 "
                       "(experimental). A server runs at it; a player's game starts at it and takes the rate of the "
@@ -98,10 +96,8 @@ int TickRate() {
 bool SetTickRate(int rate) {
   rate = ValidTickRate(rate, 30);
   if (g_timers_made.load(std::memory_order_acquire)) return TickRate() == rate;
-  const bool changed = TickRate() != rate;
-  if (changed) REXLOG_INFO("BF tick rate: {} ticks a second for this run (the server's)", rate);
+  if (TickRate() != rate) REXLOG_INFO("BF tick rate: {} ticks a second for this run (the server's)", rate);
   g_rate.store(rate, std::memory_order_relaxed);
-  if (changed) FrameRateForTickRate();  // a frame rate of 30 locks to one tick a frame only at 30 (issue 43)
   return true;
 }
 bool TickRateFixed() { return g_timers_made.load(std::memory_order_acquire); }
