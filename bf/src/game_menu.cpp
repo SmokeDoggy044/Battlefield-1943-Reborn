@@ -4104,8 +4104,8 @@ class GameMenu final : public rex::ui::ImGuiDialog {
                           "bf_master_volume", 0, 100, 1, Percent));
     rows.push_back(Slider("Game audio", "Music volume", "How loud the game's music is, in menus, loading and matches. Applies at once.", "bf_music_volume", 0,
                                  100, 1, Percent, 100));
-    rows.push_back(NotYet(Slider("Game audio", "Effects volume", "How loud the game's sound effects are.",
-                                 "bf_effects_volume", 0, 100, 1, Percent, 100)));
+    rows.push_back(Slider("Game audio", "Effects volume", "How loud the game's sound effects are: gunfire, explosions, vehicles and the rest. Applies at once.",
+                                 "bf_effects_volume", 0, 100, 1, Percent, 100));
     rows.push_back(Slider("Game audio", "Voices volume", "How loud the soldiers' voices and radio calls are. Applies at once.",
                                  "bf_voices_volume", 0, 100, 1, Percent, 100));
     rows.push_back(Toggle("Menu", "Menu music",
