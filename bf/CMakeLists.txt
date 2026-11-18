@@ -43,6 +43,7 @@ set(BF1943_SOURCES
     src/account_key.cpp
     src/launcher_kit.cpp
     src/achievement_toast.cpp
+    src/theme_chime.cpp
     src/reborn_achievements.cpp
     src/server_stats.cpp
     src/steam_shortcut.cpp

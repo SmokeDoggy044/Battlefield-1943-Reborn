@@ -55,6 +55,7 @@
 #include "capture_points.h"
 #include "dbx_tree.h"
 #include "night_ops.h"
+#include "theme_chime.h"
 
 #include <map>
 
@@ -630,6 +631,7 @@ std::vector<uint8_t> ShrinkRgb(const std::vector<uint8_t>& rgba, int w, int h, i
 
 }  // namespace
 
+bool MakeAchievementChime(const fs::path& extracted);  // achievement_toast.cpp: the popup's chime from the menu music
 bool EaAudioToWav(const std::vector<uint8_t>& wave_res, const std::vector<uint8_t>* stream, const fs::path& wav,
                   float scale);  // game_music.cpp
 
@@ -1278,9 +1280,13 @@ void ExtractGameArt(const fs::path& game, const fs::path& out_dir) {
   // pressing ... used in our menus now and pause menus"): the four waves dice.UISound plays (game_music.cpp
   // PlayMenuSound), from mainmenu-00.fbrb into cache\extracted\sounds.
   const bool ui_sounds = !fs::exists(out_dir / "sounds" / "back.wav");
-  if (todo.empty() && !music && !plants && !startup && !menu && !fonts && minimaps.empty() && !map_icons && !ui_sounds)
+  // The achievement popup's chime (TekRantGaming, 18 Nov 2026; theme_chime.h): the Battlefield theme's hook, made
+  // from the menu music once that is there, into cache\extracted\sounds.
+  const bool chime = !fs::exists(out_dir / theme_chime::kMade);
+  if (todo.empty() && !music && !plants && !startup && !menu && !fonts && minimaps.empty() && !map_icons && !ui_sounds &&
+      !chime)
     return;
-  std::thread([game, out_dir, todo, music, plants, startup, trg_logo, menu, fonts, minimaps, map_icons, ui_sounds] {
+  std::thread([game, out_dir, todo, music, plants, startup, trg_logo, menu, fonts, minimaps, map_icons, ui_sounds, chime] {
     if (ui_sounds) {  // first: small, and the menus want them from their first page
       const auto t0 = std::chrono::steady_clock::now();
       Archive a;
@@ -1460,6 +1466,7 @@ void ExtractGameArt(const fs::path& game, const fs::path& out_dir) {
         REXLOG_INFO("BF game art: the menu music in {} ms",
                     std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count());
     }
+    if (chime) MakeAchievementChime(out_dir);  // after the music: it is cut from it (it says how it went)
     if (menu) ExtractMenuArt(game, out_dir);
     if (fonts) BfFontPrepare(game, out_dir.parent_path().parent_path());  // user\cache\extracted -> user
   }).detach();

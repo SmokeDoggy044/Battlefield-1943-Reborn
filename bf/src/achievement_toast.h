@@ -5,6 +5,9 @@
 // short chime plays. Several at once queue, one after the other. As King Kong Recompiled's toast (kk/src/toast.cpp),
 // in the Field Dispatch look.
 //
+// The chime is the Battlefield theme's hook made from the player's own game files (theme_chime.h; since 18 Nov 2026),
+// King Kong's plain chime when those give none.
+//
 // Settings > Audio: bf_achievement_popups (on or off) and bf_achievement_volume (0 to 100, the chime's volume; 0 is
 // silent). A WAV of the player's own, <user>\sounds\achievement.wav (16 bit PCM), plays in place of the chime.
 #pragma once
@@ -61,6 +64,11 @@ std::vector<AchievementEntry> AchievementList(bool* from_game = nullptr, bool* h
 
 // The chime (or the player's achievement.wav), at the achievement_sound volume.
 void PlayAchievementSound();
+
+// The Battlefield theme's chime (theme_chime.h) made into `extracted` (user\cache\extracted) from the menu music
+// there, unless it is there already; true when it is there after the call. The first start's worker makes it after
+// the menu music (shader_prep.cpp ExtractGameArt), so an unlock only reads it; any thread.
+bool MakeAchievementChime(const std::filesystem::path& extracted);
 
 // Where the user folder is (bf1943_app.h, at setup): the settings file and sounds\achievement.wav.
 void SetAchievementUserDir(const std::filesystem::path& user_dir);
