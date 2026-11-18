@@ -311,6 +311,9 @@ class XmaContext {
 
   // Blocks of silence still to write after a stream's flushed tail (FlushTailAtStreamEnd).
   int32_t silence_pad_blocks_ = 0;
+
+  // Decode stopped at a frame that needs the next input buffer (not valid yet): Work waits for the next kick.
+  bool input_stalled_ = false;
 };
 
 }  // namespace rex::audio
