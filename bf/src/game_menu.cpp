@@ -1465,7 +1465,10 @@ class GameMenu final : public rex::ui::ImGuiDialog {
   AchJoin ach_join_ = AchJoin::kNone;
   double ach_in_world_since_ = -1;
   void NoteRebornAchievements() {
-    if (ach_join_ == AchJoin::kNone || REXCVAR_GET(server)) return;
+    if (REXCVAR_GET(server)) return;
+    // The vehicle ones (Steel Behemoth and the rest): whatever the match, from the seat the soldier sits in.
+    if (reborn_achievements::VehicleTick(InMatch() && LevelLoaded())) SendLeaderboard("an achievement");
+    if (ach_join_ == AchJoin::kNone) return;
     const double now = ImGui::GetTime();
     if (!(InMatch() && LevelLoaded() && comms::InWorld())) {
       ach_in_world_since_ = -1;

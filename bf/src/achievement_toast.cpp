@@ -550,7 +550,7 @@ void TestAchievementPopup(uint32_t id) {
 void AchievementToast::OnDraw(ImGuiIO& io) {
   Toast toast;
   const double now = ImGui::GetTime();
-  if (reborn_achievements::Ensure()) NoteAchievementCatalog();  // Reborn's own 3 beside the game's; the copy kept
+  if (reborn_achievements::Ensure()) NoteAchievementCatalog();  // Reborn's own beside the game's; the copy kept
 #if defined(BF_DEV_TOOLS)
   // BF_DEV_ACHIEVEMENT_TEST="<s>:<id>[,<s>:<id>...]" (tests): a test popup for achievement <id> <s> seconds after the
   // window opened, as the page's Y does.

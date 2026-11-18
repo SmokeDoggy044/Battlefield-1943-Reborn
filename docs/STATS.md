@@ -166,18 +166,23 @@ A protected name already sends its unlocked ids with its signed stats, and a rec
 ## Reborn's own achievements
 
 TekRantGaming asked on 16 Nov 2026 for achievements of our own, with gamerscore and pictures of their own. There are
-three, in f/src/reborn_achievements.cpp:
+eight, in `bf/src/reborn_achievements.cpp`:
 
 | Id | Name | Gamerscore | Unlocked when |
 |---|---|---|---|
 | 101 | I am reborn | 10 G | you load into your first multiplayer match (any server, a custom match too) |
 | 102 | I am forever | 20 G | you load into a match on a community server |
 | 103 | I am inevitable | 30 G | you load into a custom match that you are hosting |
+| 104 | Steel Behemoth | 10 G | you get into a tank for the first time |
+| 105 | Road Warrior | 10 G | you get into a jeep for the first time |
+| 106 | Naval Warfare | 10 G | you get into a boat for the first time |
+| 107 | Air Superiority | 10 G | you get into a fighter plane for the first time |
+| 108 | Death From Above | 20 G | you call in the bombers from an airfield's air raid bunker |
 
-With the game's 200 G the total is 260 G.
+TekRantGaming asked for 104 to 108 on 18 Nov 2026. With the game's 200 G the total is 320 G.
 
 - **Ids.** The game's title data has 1 to 12. Ours are 101 and up, so they never clash, and the backend already counts
-  every id from 1 to 999 (chievement_share), so it needs no change for them.
+  every id from 1 to 999 (`achievement_share`), so it needs no change for them.
 - **Where they live.** They are put into the SDK's own catalog (AchievementManager::RegisterAchievement, which is made
   for a recomp's own entries) once the game's 12 are loaded. So they work like the 12: the unlock is saved in the same
   user/achievements/5841097E.toml, the popup and chime show it, the Achievements page and Stats & Rewards list it, a
@@ -187,10 +192,36 @@ With the game's 200 G the total is 260 G.
   server is one that is not official, not this PC's own custom match, and not a LAN match. A friend's listed custom
   match counts, as it is on the browser's Community tab. Your own custom match gives I am reborn and I am inevitable,
   not I am forever.
+- **Vehicles.** Any seat counts (driver, pilot, gunner or passenger), on either side, once. Which vehicle it is comes
+  from the game itself, never from the model. Each time the soldier's seat changes (`seat_info.h`), the seat's vehicle
+  object is read: its data at +0x14 holds the vehicle's own name at +0xC (the name the server counts time per vehicle
+  by) and its class at +0x80. `ForVehicle` in `reborn_achievements.cpp` turns the name, or else the class, into the
+  achievement. The seat's own control scheme decides the planes and the air raid: a plane's pilot gives Air
+  Superiority and flying the air raid's bombers gives Death From Above. Sitting in the bunker before the bombers fly
+  gives nothing. Guns give none. The log says each seat once: "BF achievements: seat #n in the vehicle ...".
+
+  | Side | Vehicle | Name | Class |
+  |---|---|---|---|
+  | USMC | tank | Sherman | Medium_Tank |
+  | Japan | tank | chi-ha | Medium_Tank |
+  | USMC | jeep | Willys | Light_Jeep |
+  | Japan | jeep | Kurogane | Light_Jeep |
+  | both | landing boat | LCVP | Light_Boat |
+  | USMC | fighter | Corsair | Aircraft_Airframe_corsair |
+  | Japan | fighter | Zero | Aircraft_Airframe |
+  | both | air raid bunker | bombraid2 | Stationary_Metal |
+
+  Tested on 18 Nov 2026 in matches on a local server: each one on both sides, a gunner's seat, each unlocking once
+  (also with a profile that already had them), the popup with its picture in a boat and in the bomber view, and the
+  Achievements page with all 20. Dev builds: `BF_DEV_VEHICLESCAN=1` logs the text near a seat's vehicle in memory,
+  and `BF_DEV_FIND_SPAWNS=<x>,<z>,<r>` logs a server's spawn points near a place (for `BF_DEV_MOVE_SPAWNS`: Japan's
+  carrier on Wake Island is -164.2, 231.0, -554.3 and its neighbours).
 - **Pictures.** python tools/make_reborn_achievements.py draws them as 64 x 64 RGBA PNGs, the size and format of the
-  game's own pictures, into f/data/achievements/<id>.png. They ship next to the exe in data/achievements. They
+  game's own pictures, into `bf/data/achievements/<id>.png`. They ship next to the exe in data/achievements. They
   are perforated stamps like the game's, but every scene is our own drawing: a phoenix rising from its flames, a
-  golden endless loop in laurel, and a command flag with a star planted on a hill by the sea.
+  golden endless loop in laurel, a command flag with a star planted on a hill by the sea, a tank in its own dust, a
+  jeep on a dirt road past a palm, a landing boat throwing spray, a fighter climbing over the clouds, and bombers over
+  an island at dusk with their bombs falling.
 
 ## Tests
 

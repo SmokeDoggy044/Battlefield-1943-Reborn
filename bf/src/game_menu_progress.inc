@@ -192,7 +192,7 @@
     uint64_t when = 0;  // FILETIME
     long long have = 0, need = 0;  // need 0: no count of ours
   };
-  // The game's 12 and Reborn's own 3, also before the game runs (AchievementList: the copy of the game's catalog
+  // The game's 12 and Reborn's own, also before the game runs (AchievementList: the copy of the game's catalog
   // from an earlier run and the unlock file; until the game has run once on this user folder, Reborn's own only).
   bool ach_has_games_ = true;
   std::vector<AchRow> AchievementRows(const ProgCard& c) {
@@ -917,9 +917,9 @@
     ach_scroll_ = std::clamp(ach_scroll_, 0, per_col - kShown);
     if (in.y && n) TestAchievementPopup(list[size_t(ach_row_)]->info.id);
     kit::Spaced(d, f.typed, st(10.5f), st.P(48, 91), kit::kKhakiDim,
-                test_profile_active_ ? "BATTLEFIELD 1943 \xC2\xB7 TEST PROFILE"
-                : NameProtected()   ? "BATTLEFIELD 1943 \xC2\xB7 THE GAME'S OWN 12 AND REBORN'S 3 \xC2\xB7 SAVED TO YOUR NAME"
-                                    : "BATTLEFIELD 1943 \xC2\xB7 THE GAME'S OWN 12 AND REBORN'S 3 \xC2\xB7 SAVED ON THIS PC",
+                test_profile_active_ ? std::string("BATTLEFIELD 1943 \xC2\xB7 TEST PROFILE")
+                : fmt::format("BATTLEFIELD 1943 \xC2\xB7 THE GAME'S OWN 12 AND REBORN'S {} \xC2\xB7 {}",
+                              reborn_achievements::Count(), NameProtected() ? "SAVED TO YOUR NAME" : "SAVED ON THIS PC"),
                 st(2));
     kit::GameText(d, kit::GameFont::kHeadline, st(40), st.P(48, 105), kit::kCream, "ACHIEVEMENTS");
     // ---- the summary strip
