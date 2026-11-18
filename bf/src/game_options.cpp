@@ -9,12 +9,15 @@
 //     bullets and low health (the first person camera's blur getter sub_82282A80, read for the post process from
 //     0x8228C0C0 in sub_8228C070: its answer is 0), the camera manager's own blur (+0x100, 0 for that call) and the
 //     PsMotionBlur pass (skipped). In a calm match none of them ran (run seat2: no pass, every blur value 0).
-//   - Music and voices (bf_music_volume, bf_voices_volume): a playing sound's gain is its category's volume,
-//     sub_826F2040(sound, category) from the per sound update (0x8270CCBC), times its own. Categories: 0 effects, 1
-//     music, 2 dialogue (voices), 3 the car radio (with the music). Run opt_vol0: in the match, music and the ambient
-//     sound went silent at 0; gunfire did not (it never runs that update), so bf_effects_volume scales only what does
-//     and is not in the menu yet. A change sets the sound system's dirty byte (*(0x82CC2204) + 0x201) so playing sounds
-//     follow at once.
+//   - Music, effects and voices (bf_music_volume, bf_effects_volume, bf_voices_volume): a playing sound's gain is its
+//     category's volume, sub_826F2040(sound, category) from the per sound update (sub_8270C7F8, 0x8270CCBC), times its
+//     own. Categories: 0 effects, 1 music, 2 dialogue (voices), 3 the car radio (with the music). The update pushes
+//     that gain to the sound's EA voices only when the sound is flagged (+0x104 bit 0x40000000) or the system is
+//     dirty. Gunfire and other repeated effects start each new wave on a sound object that already exists
+//     (sub_82708590, the sound's start), so the gain was never pushed for them and they stayed at full volume at 0
+//     (run opt_vol0). We flag the sound at each start, so its next update applies the category volume (gunfire,
+//     footsteps and the rest silent at 0). A change sets the sound system's dirty byte (*(0x82CC2204) + 0x201) so
+//     playing sounds follow at once.
 
 #include <algorithm>
 #include <atomic>
@@ -140,9 +143,9 @@ REX_HOOK_RAW(sub_826F2040) {
       REXLOG_INFO("BF options: category volume {} -> {:.3f} for lr {:08X}", category, ctx.f1.f64, lr);
   }
 #endif
-  // At the per sound update, which sets each voice's gain (category volume times the sound's own). One shots such as
-  // gunfire take another path: scaled at play start (0x82708624) nothing changed (run opt_vol0b), so the effects
-  // category is not offered yet.
+  // At the per sound update, which sets each voice's gain (category volume times the sound's own). Scaling the copy
+  // taken at the sound's start (0x82708624) changed nothing (run opt_vol0b); the start's flag below makes the update
+  // push it instead.
   if (lr != kSoundUpdateCaller) return;
 #if defined(BF_DEV_TOOLS)
   ++g_sounds;
@@ -160,6 +163,18 @@ REX_HOOK_RAW(sub_826F2040) {
                        : category == 1 || category == 3 ? Percent(REXCVAR_GET(bf_music_volume))
                                                          : 1.0;
   ctx.f1.f64 *= std::min(scale, 1.0);
+}
+
+// The sound's start (sub_82708590, r3 = the sound): flag it so its next per sound update pushes the category gain to
+// all its EA voices, including the ones this start adds. Only while one of our category volumes is below 100 %: at
+// the defaults the game runs exactly as it always did.
+REX_EXTERN(__imp__sub_82708590);
+REX_HOOK_RAW(sub_82708590) {
+  const uint32_t sound = ctx.r3.u32;
+  __imp__sub_82708590(ctx, base);
+  const bool scaled = REXCVAR_GET(bf_music_volume) < 100.0 || REXCVAR_GET(bf_effects_volume) < 100.0 ||
+                      REXCVAR_GET(bf_voices_volume) < 100.0;
+  if (sound && scaled) base[sound + 0x104] |= 0x40;
 }
 
 namespace bf1943 {
