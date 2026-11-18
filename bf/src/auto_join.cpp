@@ -447,7 +447,7 @@ void FlashCall(const std::string& path) {
 }
 
 // For the pause menu (game_menu.cpp): BF's own pause menu ("Frontline Report": My Squad, Scoreboard, Help & Options,
-// Leaderboards, Achievements, Exit Game, Redeploy; B resumes), walked from Start. 1: its scoreboard, 2: leave the
+// Leaderboards, Achievements, Exit Game, Suicide; B resumes), walked from Start. 1: its scoreboard, 2: leave the
 // match (Exit Game, then A on its confirmation, run pz2).
 void RunPauseAction(int action) {
   std::lock_guard<std::mutex> lock(g.mutex);

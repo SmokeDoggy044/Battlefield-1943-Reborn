@@ -3,8 +3,8 @@
 // replacement whose rows do what they say, by the game's own commands): the match goes on behind, darkened; the rows
 // in a column at the left under PAUSED in the game's own lettering; the field report card at the right (the server,
 // its map and movement, the time in the field, the squad, the comms with their keys, the last chat lines, a private
-// match's reach); Exit Game and Redeploy (the game's suicide) ask first; My Squad finds an open squad or leaves it. Settings opens the
-// settings page (game_menu_settings.inc) and comes back here. The mockup (runs\ui-designs, build2.py a1_pause) is
+// match's reach); Exit Game and Redeploy (the game's suicide) ask first; My Squad finds an open squad or leaves it.
+// Settings opens the settings page (game_menu_settings.inc) and comes back here. The mockup (runs\ui-designs, build2.py a1_pause) is
 // 1920 x 1080; sizes here are its at 720 lines, on the Stage.
 
   double match_began_ = -1;  // the match's first frame (UpdateWalk): the field report's time in the field
