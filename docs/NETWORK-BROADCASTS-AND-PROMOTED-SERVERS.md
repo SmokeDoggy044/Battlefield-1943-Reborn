@@ -7,7 +7,9 @@ official server package's manager:
   official machines', US Central included) or, when you choose, on every server registered with the main backend,
   community servers too.
 - **Promoted servers**: a community server you pick shows on the **Reborn** tab with the official servers, marked
-  **PROMOTED**, until you take it back. It never says it is run by TRG Studios.
+  **TRUSTED COMMUNITY SERVER**, until you take it back. It never says it is run by TRG Studios. The official servers
+  are marked **REBORN OFFICIAL SERVER** next to them. (Players see "Trusted Community Server", never "promoted";
+  the commands and the backend keep the word promoted.)
 
 All commands below are typed in the official set's folder on the official machine, as the other manager commands:
 
@@ -102,8 +104,10 @@ python\python.exe server\manager.py promote <host key> [--note "what it is"]
 
 The start of the key is enough when it matches only one registered server (8 characters or more), and a whole key
 works even while that server is offline. Within a few seconds that host's servers move to the **Reborn** tab, marked
-**PROMOTED** in the list, on their card ("A community server, promoted by TRG Studios."), on Home's Quick Play
-line, in the news window's Reborn servers box, and on the website's server list.
+**TRUSTED COMMUNITY SERVER** under the name in the list and on their card ("A trusted community server, listed with
+ours by TRG Studios."), on Home's Quick Play line, as TRUSTED in the news window's Reborn servers box, in the box
+before joining, and on the website's server list. The official servers say **REBORN OFFICIAL SERVER** in the same
+places.
 
 A promoted server must still pass the build check: one that is hidden (not an official package) or on the block list
 is never shown, promoted or not. Blocking a promoted host takes it off the list within a minute.
@@ -140,7 +144,8 @@ Community tab. It looks like this, and can be edited by hand:
 
 A promoted server stays a community server inside the backend: its players' stats are not counted as an official
 server's, and `--to official` broadcasts do not go to it. Games before v0.4.7 show it on the Reborn tab like the
-official servers, without the PROMOTED mark (once v0.4.7 is out, the version gate keeps those games off the servers).
+official servers, without the Trusted Community Server mark (once v0.4.7 is out, the version gate keeps those games
+off the servers).
 
 ## Tests
 

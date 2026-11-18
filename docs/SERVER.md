@@ -30,7 +30,7 @@ its name, its map, its players, its region and its tick rate.
 6. **Messages**: tell everyone on a server about an update, a restart or maintenance, with a countdown, or type your
    own. Your players also see the rare message the Reborn team sends to every server (from v0.4.7 on).
 
-The Reborn team can also show a community server on the **Reborn** tab, marked PROMOTED
+The Reborn team can also show a community server on the **Reborn** tab, marked TRUSTED COMMUNITY SERVER
 ([how it works](NETWORK-BROADCASTS-AND-PROMOTED-SERVERS.md)); there is nothing to do for it on your side.
 
 The manager keeps running in the background, with no window, and starts a server again if it stops. **Stop

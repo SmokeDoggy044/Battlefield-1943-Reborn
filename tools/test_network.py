@@ -212,7 +212,7 @@ def main():
     check('Direct connect (find) says promoted too', (found.get('server') or {}).get('promoted') is True, found)
     check('the backend log says so', 'promoted: listed with the Reborn servers' in read(backend_log))
     out = mgr('promoted')
-    check('manager.py promoted lists A as shown', keys['A'] in out and 'shown, PROMOTED' in out, out)
+    check('manager.py promoted lists A as shown', keys['A'] in out and 'shown as trusted' in out, out)
 
     out = mgr('promote', keys['C'])
     check('promoting C (hidden) is taken, and the manager says it is not shown', 'Not shown' in out, out)

@@ -401,7 +401,7 @@
           const float cw = kit::SpacedWidth(f.typed, st(9.5f), count, st(1));
           float rw = cw;  // the count and the mark before it
           if (sv.promoted) {  // a promoted community server (Promoted, plasma.py): marked, never passed off as ours
-            const char* mark = "PROMOTED";
+            const char* mark = "TRUSTED";  // a Trusted Community Server, said short in this small box
             const float mw = kit::SpacedWidth(f.typed, st(8.5f), mark, st(1.5f));
             kit::Spaced(d, f.typed, st(8.5f), ImVec2(x1 - cw - st(10) - mw, y + st(3.5f)), IM_COL32(138, 112, 40, 255), mark, st(1.5f));
             rw += mw + st(10);

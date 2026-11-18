@@ -199,6 +199,23 @@
     return w;
   }
 
+  // The small band under a Reborn tab row's name (TekRantGaming, 18 Nov 2026): REBORN OFFICIAL SERVER on ours, on the
+  // black tape, TRUSTED COMMUNITY SERVER on a promoted community one (server_list.h promoted), in gold. Also the
+  // server card's first chip. His ask: the letters fill the tape (a tight box, large letters), so the lettering is
+  // sized from the box (the capitals of ui_bold are 0.59 of its size, and sit 0.17 of it above the line's middle,
+  // measured on screen); returns its width.
+  float RowBanner(ImDrawList* d, const Stage& st, ImVec2 at, const ServerInfo& sv, float h) {
+    if (!sv.official) return 0;
+    const kit::Fonts& f = kit::GetFonts();
+    const char* t = sv.promoted ? "TRUSTED COMMUNITY SERVER" : "REBORN OFFICIAL SERVER";
+    const float size = h * 1.05f, track = st(0.6f), pad = st(4.5f);
+    const ImVec2 b(at.x + kit::SpacedWidth(f.ui_bold, size, t, track) + pad * 2, at.y + h);
+    d->AddRectFilled(at, b, sv.promoted ? kit::kGold : kit::kStrip);
+    kit::Spaced(d, f.ui_bold, size, ImVec2(at.x + pad, at.y + (h - size * 1.45f) * 0.5f + size * 0.17f),
+                sv.promoted ? kit::kInk : kit::kStripText, t, track);
+    return b.x - at.x;
+  }
+
   // Four bars at `at` (left, middle): green under 60 ms, amber under 120, red above; not measured: all faint.
   float PingBars(ImDrawList* d, const Stage& st, ImVec2 at, int ping_ms, bool on_green) {
     const int bars = ping_ms < 0 ? 0 : ping_ms < 60 ? 4 : ping_ms < 120 ? 3 : ping_ms < 200 ? 2 : 1;
@@ -395,7 +412,9 @@
       if (cleared) browser_search_.clear(), row_ = 0, scroll_ = 0;
     }
     // ---- the table
-    const float head = st(30), rh = st(36);
+    // A list with Reborn tab servers in it has taller rows: room for the band under their names (RowBanner).
+    const bool banners = std::any_of(servers.begin(), servers.end(), [](const ServerInfo& s) { return s.official; });
+    const float head = st(30), rh = banners ? st(44) : st(36);
     kit::PaperArt(d, ta, tb);
     // (The region with its flag and the tick rate: TekRantGaming, 13 Nov 2026.)
     const float colx[6] = {st(14), st(296), st(432), st(566), st(676), st(736)};
@@ -458,10 +477,10 @@
                       sel || sixty ? kit::kCream : kit::kInkSection, hz, st(1));
           iw += hw + st(8);
         }
-        float nw = iw + kit::GameText(d, kit::GameFont::kText, cap, ImVec2(ta.x + colx[0] + iw, y + (rh - cap) * 0.5f), ink, sv.name);
-        if (sv.promoted)  // a community server shown with ours (Promoted, plasma.py): marked in the row too
-          nw += st(12) + Chip(d, st, ImVec2(ta.x + colx[0] + nw + st(12), y + (rh - st(16)) * 0.5f), st(16), "PROMOTED", kit::kGold,
-                              kit::kInk, false);
+        // A Reborn tab server (ours, or a promoted community one: plasma.py Promoted) has its band under the name.
+        const float name_y = sv.official ? y + st(6.5f) : y + (rh - cap) * 0.5f;
+        float nw = iw + kit::GameText(d, kit::GameFont::kText, cap, ImVec2(ta.x + colx[0] + iw, name_y), ink, sv.name);
+        RowBanner(d, st, ImVec2(ta.x + colx[0] + iw, y + st(23)), sv, st(15));
         if (sv.night && kNightOps)
           Chip(d, st, ImVec2(ta.x + colx[0] + nw + st(12), y + (rh - st(16)) * 0.5f), st(16), "NIGHT", IM_COL32(40, 46, 88, 255),
                kit::kStripText, false);
@@ -570,14 +589,16 @@
       const ImVec2 j0(pa.x + st(18), pb.y - st(18) - st(40)), j1(pb.x - st(18) - st(40) - st(8), pb.y - st(18));
       d->PushClipRect(pa, ImVec2(pb.x, j0.y - st(10)), true);
       float x = pa.x + st(18), y = p1.y + st(16);
-      if (sv->promoted)  // a community server shown with ours (Promoted, plasma.py): its own mark, gold
-        x += Chip(d, st, ImVec2(x, y), st(18), "PROMOTED", kit::kGold, kit::kInk, false) + st(6);
+      // Ours and a promoted community one (Promoted, plasma.py): the row's band, as large; the others chips beside it.
+      const float kh = sv->official ? st(17) : st(18), cy = y + (kh - st(18)) * 0.5f;
+      if (sv->official)
+        x += RowBanner(d, st, ImVec2(x, y), *sv, kh) + st(6);
       else
-        x += Chip(d, st, ImVec2(x, y), st(18), sv->official ? "REBORN" : "COMMUNITY", kit::kStrip, kit::kStripText, false) + st(6);
+        x += Chip(d, st, ImVec2(x, y), st(18), "COMMUNITY", kit::kStrip, kit::kStripText, false) + st(6);
       if (sv->night && kNightOps)
-        x += Chip(d, st, ImVec2(x, y), st(18), "NIGHT OPS", IM_COL32(40, 46, 88, 255), kit::kStripText, false) + st(6);
-      if (fav) Chip(d, st, ImVec2(x, y), st(18), "FAVOURITE", kit::kGold, kit::kInk, false);
-      y += st(18) + st(14);
+        x += Chip(d, st, ImVec2(x, cy), st(18), "NIGHT OPS", IM_COL32(40, 46, 88, 255), kit::kStripText, false) + st(6);
+      if (fav) Chip(d, st, ImVec2(x, cy), st(18), "FAVOURITE", kit::kGold, kit::kInk, false);
+      y += kh + st(14);
       kit::GameText(d, kit::GameFont::kText, st(13), ImVec2(pa.x + st(18), y), kit::kInk, sv->name);
       y += st(13) + st(10);
       std::string line = fmt::format("{} / {} PLAYERS", sv->players, sv->max_players);
@@ -587,7 +608,7 @@
       kit::Spaced(d, f.typed, st(9.5f), ImVec2(pa.x + st(18), y), full ? kit::kStamp : kit::kInkSection, line, st(1.5f));
       y += st(20);
       const std::string desc = !sv->description.empty() ? sv->description
-                               : sv->promoted              ? "A community server, promoted by TRG Studios."
+                               : sv->promoted              ? "A trusted community server, listed with ours by TRG Studios."
                                : sv->official              ? "A Reborn server, run by TRG Studios."
                                                            : "A community server.";
       y += kit::Wrapped(d, f.ui, st(12), ImVec2(pa.x + st(18), y), kit::kInk, desc, pb.x - pa.x - st(36)) + st(12);
@@ -611,7 +632,7 @@
       }
       row("Tick rate", sv->tick_hz > 0 ? fmt::format("{} Hz", sv->tick_hz) : std::string("Not said"));
       row("Next map", sv->next_map.empty() ? "Not announced" : sv->next_map);
-      row("Run by", sv->promoted ? "A player \xC2\xB7 promoted by TRG Studios" : sv->official ? "TRG Studios" : "A player");
+      row("Run by", sv->promoted ? "A player \xC2\xB7 trusted by TRG Studios" : sv->official ? "TRG Studios" : "A player");
       d->PopClipRect();
       if (full && QueueJoinable(*sv, lan)) {  // a backend with the queue: a place in it (QueuePopup)
         if (GreenButton(d, st, j0, j1, kit::Button::kA, "JOIN QUEUE")) join = true;

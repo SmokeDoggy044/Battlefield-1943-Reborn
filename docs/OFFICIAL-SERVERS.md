@@ -24,7 +24,7 @@ The Project-Official Servers are updated by hand, on the owner's word, when a re
 ## Messages and promoted servers
 
 The owner can send a message to every official server or to every server on the main backend, and can show chosen
-community servers on the Reborn tab, marked PROMOTED: [NETWORK-BROADCASTS-AND-PROMOTED-SERVERS.md](NETWORK-BROADCASTS-AND-PROMOTED-SERVERS.md).
+community servers on the Reborn tab, marked TRUSTED COMMUNITY SERVER: [NETWORK-BROADCASTS-AND-PROMOTED-SERVERS.md](NETWORK-BROADCASTS-AND-PROMOTED-SERVERS.md).
 
 ## Ports
 

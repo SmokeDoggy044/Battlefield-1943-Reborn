@@ -2428,8 +2428,8 @@ class GameMenu final : public rex::ui::ImGuiDialog {
     const std::string promo_from = exp_popup_server_.description.empty() ? std::string()
                                    : "From the server: " + exp_popup_server_.description;
     if (exp_promo_) {
-      paragraphs = {"This server is run by a member of our community. It's in good standing, so we've promoted it to "
-                    "the Reborn list.",
+      paragraphs = {"This server is run by a member of our community. It's in good standing, so we've listed it with ours "
+                    "on the Reborn tab as a Trusted Community Server.",
                     "If you run into any problems, let the server's owner know, or tell us on Discord."};
       if (!promo_from.empty()) paragraphs.push_back(promo_from.c_str());
     } else if (exp_us_) {
@@ -2453,7 +2453,7 @@ class GameMenu final : public rex::ui::ImGuiDialog {
       kit::Paper(d, a, b, st.u);
       kit::Tape(d, ImVec2((a.x + b.x) * 0.5f, a.y), st(110), st(26), -3);
       kit::Heading(d, st(36), ImVec2(a.x + st(30), a.y + st(26)), kit::kInk,
-                   exp_promo_ ? "COMMUNITY SERVER" : exp_us_ ? "US CENTRAL PLAYTEST" : "EXPERIMENTAL SERVER", st(1.5f),
+                   exp_promo_ ? "TRUSTED COMMUNITY SERVER" : exp_us_ ? "US CENTRAL PLAYTEST" : "EXPERIMENTAL SERVER", st(1.5f),
                    st(620));
       kit::Spaced(d, f.typed, st(11), ImVec2(a.x + st(32), a.y + st(72)), kit::kStamp,
                   fmt::format("{} \xC2\xB7 {} HZ", exp_popup_server_.name, exp_popup_server_.Tick()), st(1.5f));
