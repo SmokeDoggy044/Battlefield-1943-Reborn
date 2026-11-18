@@ -255,6 +255,8 @@ class XmaContext {
   void UpdateLoopStatus(XMA_CONTEXT_DATA* data);
   void ClearLocked(XMA_CONTEXT_DATA* data);
   void ResetDecoderState();
+  void FlushTailAtStreamEnd(memory::RingBuffer* output_rb, const XMA_CONTEXT_DATA* data);
+  void WriteSilencePad(memory::RingBuffer* output_rb, const XMA_CONTEXT_DATA* data);
 
   memory::RingBuffer PrepareOutputRingBuffer(XMA_CONTEXT_DATA* data);
   int PrepareDecoder(int sample_rate, bool is_two_channel);
@@ -306,6 +308,9 @@ class XmaContext {
   bool carry_valid_ = false;
   uint8_t pending_output_limit_ = 0;
   uint8_t pending_start_skip_ = 0;
+
+  // Blocks of silence still to write after a stream's flushed tail (FlushTailAtStreamEnd).
+  int32_t silence_pad_blocks_ = 0;
 };
 
 }  // namespace rex::audio
