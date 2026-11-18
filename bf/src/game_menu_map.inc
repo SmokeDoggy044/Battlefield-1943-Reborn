@@ -17,13 +17,14 @@
   // A soldier's facing from his transform's third row: this way round (map_players.cpp; checked against the camera).
   static constexpr float kFacing = 1.0f;
 
-  void PauseMap(ImDrawList* d, ImGuiIO& io, const Stage& st, const Input& in, bool has_input, const ImVec2* box = nullptr) {
+  void PauseMap(ImDrawList* d, ImGuiIO& io, const Stage& st, const Input& in, bool has_input, const ImVec2* box = nullptr,
+               bool paper = true) {
     const std::vector<CapturePoint> points = CapturePoints();
     if (points.empty()) return;  // no level's world yet, or one without capture points
     const kit::Fonts& f = kit::GetFonts();
     const std::string folder = LoadedLevelFolder();
     const ImVec2 a = box ? box[0] : st.P(436, 120), b = box ? box[1] : st.P(788, 534);  // box: the pause page's own
-    kit::PaperArt(d, a, b);
+    if (paper) kit::PaperArt(d, a, b);  // not on the pause's map page, whose card is drawn under it
     // 0.4.2: the pause page's map is 4:3 (ar: its width over its height); the older square one is 1.
     const float x0 = a.x + st(8), x1 = b.x - st(8), ar = box ? 4.0f / 3.0f : 1.0f, side = (x1 - x0) / ar;
     float y = a.y + st(9);

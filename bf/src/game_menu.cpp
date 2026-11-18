@@ -791,6 +791,7 @@ class GameMenu final : public rex::ui::ImGuiDialog {
   void ShowPause() {
     open_ = true, page_ = Page::kPause, pause_row_ = 0, pause_focus_panel_ = false, handing_over_ = -1;
     pause_confirm_ = -1;
+    pause_page_ = 0;  // the map first (TekRantGaming, 18 Nov 2026)
     pause_opened_at_ = ImGui::GetTime();
   }
   bool open() const { return open_; }
@@ -1311,7 +1312,7 @@ class GameMenu final : public rex::ui::ImGuiDialog {
     for (int v : {row_, tab_, pm_row_, pm_map_, direct_key_, popup_row_, pause_row_, home_row_, news_focus_,
                   news_first_card_, setup_tab_, prompts_row_, help_row_, ctl_tab_, browse_row_, browser_tab_,
                   preset_cursor_, voice_choice_, fr_row_, slot_cursor_, files_card_, allset_row_, name_key_,
-                  pm_edit_key_, project_, capture_slot_, ctl_device_})  // ctl_device_: Settings > Controls' card
+                  pm_edit_key_, project_, capture_slot_, ctl_device_, pause_page_})  // ctl_device_: Settings > Controls' card
       HashIn(h, uint64_t(int64_t(v)));
     HashIn(h, pause_focus_panel_);
     l.selection = h;
@@ -5621,6 +5622,7 @@ class GameMenu final : public rex::ui::ImGuiDialog {
   int modes_monitor_ = -1;
   bool modes_listed_ = false;
   int pause_row_ = 0;             // the pause list's row (kPauseItems)
+  int pause_page_ = 0;            // the pause's right side: 0 the map (first), 1 the field report; LB and RB (Q, E)
   int bf_cursor_ = 0;             // BF's own pause list's selected row, under ours
   int pause_pending_row_ = -1, pause_probe_frames_ = 0;  // a row of BF's chosen: BF's selection read first
   bool gpu_benchmark_started_ = false;  // D150: the GPU's speed timed, from gpu_benchmark_at_ (2 s after the shaders)
