@@ -232,8 +232,8 @@
       }
       // The tabs: LB, MAP, FIELD REPORT, RB; the page shown in cream over a red rule, a click on a name opens it. Over
       // a dark band as the column's, so the game's score bars behind (the HUD's top) do not show through the names.
-      d->AddRectFilled(ImVec2(px0 - st(8), tab_y - st(20)), ImVec2(std::min(px1, rst.P(1012, 0).x), top - st(2)),
-                      IM_COL32(13, 15, 11, 236));  // up to the player's card at the right
+      d->AddRectFilled(ImVec2(px0 - st(8), tab_y - st(20)), ImVec2(std::min(px1, rst.P(925, 0).x), top - st(2)),
+                      IM_COL32(13, 15, 11, 236));  // past the score bars, short of the match line and the player's card
       float tx = px0;
       const float gh = st(18);
       tx += kit::Glyph(d, PromptStyle(), kit::Button::kLB, KeyFor(kit::Button::kLB), ImVec2(tx, tab_y + st(10)), gh) + st(12);

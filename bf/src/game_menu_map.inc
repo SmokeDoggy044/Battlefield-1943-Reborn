@@ -13,7 +13,9 @@
   // The map is turned as the game's own big maps are (its deploy screen's and its pause screen's: the HUD's minimap
   // states Spawn and Overview in hud_root_cq have CameraRotation -27): the level seen from above with +x to the right
   // and a little up, +z down and a little to the right. So a player finds the points where the deploy screen has them.
-  bool pause_map_wide_ = false;
+  // The whole battle first (TekRantGaming, 18 Nov 2026: the island view cut Wake Island's ends off: "The minimap's
+  // needing to show the full map properly"); X or a click shows the island. Each pause opens on it (ShowPause).
+  bool pause_map_wide_ = true;
   // A soldier's facing from his transform's third row: this way round (map_players.cpp; checked against the camera).
   static constexpr float kFacing = 1.0f;
 
@@ -46,7 +48,7 @@
     const bool wide = pause_map_wide_ || lettered < 2;
     const float cx = wide ? (ax0 + ax1) * 0.5f : (lx0 + lx1) * 0.5f, cy = wide ? (ay0 + ay1) * 0.5f : (ly0 + ly1) * 0.5f;
     // half: half the view's height in metres (its width is ar times that)
-    float half = wide ? std::max((ax1 - ax0) / ar, ay1 - ay0) * 0.5f + 130.0f : std::max((lx1 - lx0) / ar, ly1 - ly0) * 0.5f + 120.0f;
+    float half = wide ? std::max((ax1 - ax0) / ar, ay1 - ay0) * 0.5f + 130.0f : std::max((lx1 - lx0) / ar, ly1 - ly0) * 0.5f + 280.0f;  // the island whole, past its outer flags
     half = std::clamp(half, 220.0f, 1024.0f);
     // Never past the picture (it covers 1024 m each way from the level's middle): the view is drawn in from its
     // edge until its four corners are on the picture. What is then outside stays at the map's edge (below).

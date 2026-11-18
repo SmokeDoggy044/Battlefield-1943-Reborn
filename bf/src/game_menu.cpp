@@ -792,7 +792,7 @@ class GameMenu final : public rex::ui::ImGuiDialog {
   void ShowPause() {
     open_ = true, page_ = Page::kPause, pause_row_ = 0, pause_focus_panel_ = false, handing_over_ = -1;
     pause_confirm_ = -1;
-    pause_page_ = 0;  // the map first (TekRantGaming, 18 Nov 2026)
+    pause_page_ = 0, pause_map_wide_ = true;  // the map first, the whole battle (TekRantGaming, 18 Nov 2026)
     pause_opened_at_ = ImGui::GetTime();
   }
   bool open() const { return open_; }
