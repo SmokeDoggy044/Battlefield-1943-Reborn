@@ -4938,7 +4938,7 @@ class GameMenu final : public rex::ui::ImGuiDialog {
   // leaves the soldier where it stands, so the game's suicide follows two seconds later and the player spawns at the
   // new team's base.
   static constexpr const char* kPauseRows[] = {"RESUME",   "MY SQUAD",     "CHANGE TEAM",  "SCOREBOARD", "SETTINGS",
-                                               "CONTROLS", "LEADERBOARDS", "ACHIEVEMENTS", "EXIT GAME",  "SUICIDE"};
+                                               "CONTROLS", "LEADERBOARDS", "ACHIEVEMENTS", "EXIT GAME",  "REDEPLOY"};
   static constexpr int kPauseResume = 0, kPauseSquad = 1, kPauseTeam = 2, kPauseScoreboard = 3, kPauseSettingsRow = 4,
                        kPauseControls = 5, kPauseLeaderboards = 6, kPauseAchievements = 7, kPauseExit = 8,
                        kPauseSuicide = 9;
@@ -5094,13 +5094,13 @@ class GameMenu final : public rex::ui::ImGuiDialog {
       const ImVec2 ca((pa.x + pb.x - w) * 0.5f, sz.y * 0.5f - h * 0.5f), cb(ca.x + w, ca.y + h);
       kit::Paper(d, ca, cb, u, false);
       kit::Spaced(d, f.typed, 18 * u, ImVec2(ca.x + 40 * u, ca.y + 34 * u), kit::kInkFaint,
-                  exit ? "EXIT GAME" : "SUICIDE", 4 * u);
+                  exit ? "EXIT GAME" : "REDEPLOY", 4 * u);
       Text(d, f.stencil, 54 * u, ImVec2(ca.x + 38 * u, ca.y + 64 * u), kit::kInk,
-           exit ? "LEAVE THIS MATCH?" : "END THIS LIFE?");
+           exit ? "LEAVE THIS MATCH?" : "REDEPLOY NOW?");
       kit::Wrapped(d, f.typed, 20 * u, ImVec2(ca.x + 40 * u, ca.y + 140 * u), kit::kInkSoft,
                    exit ? (pm_hosting_ ? "You go back to the main menu, and your custom match ends for everyone in it."
                                        : "You go back to the main menu. Your score in this round stays with the server.")
-                        : "Your soldier dies and you pick a new spawn point. It counts as a death.",
+                        : "Your soldier leaves the field and you pick a new spawn point. It counts as a death.",
                    w - 80 * u);
       const ImVec2 ya(ca.x + 40 * u, cb.y - 84 * u), yb(ca.x + 300 * u, cb.y - 30 * u);
       const ImVec2 na(ca.x + 330 * u, cb.y - 84 * u), nb(ca.x + 590 * u, cb.y - 30 * u);

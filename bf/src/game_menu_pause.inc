@@ -3,7 +3,7 @@
 // replacement whose rows do what they say, by the game's own commands): the match goes on behind, darkened; the rows
 // in a column at the left under PAUSED in the game's own lettering; the field report card at the right (the server,
 // its map and movement, the time in the field, the squad, the comms with their keys, the last chat lines, a private
-// match's reach); Exit Game and Suicide ask first; My Squad finds an open squad or leaves it. Settings opens the
+// match's reach); Exit Game and Redeploy (the game's suicide) ask first; My Squad finds an open squad or leaves it. Settings opens the
 // settings page (game_menu_settings.inc) and comes back here. The mockup (runs\ui-designs, build2.py a1_pause) is
 // 1920 x 1080; sizes here are its at 720 lines, on the Stage.
 
@@ -300,10 +300,10 @@
       if (r == 0) pause_confirm_ = -1;
     } else if (pause_confirm_ >= 0) {
       const bool exit = pause_confirm_ == kPauseExit;
-      const int r = PauseCard(d, io, st, in, clicked >= 0, exit ? "EXIT GAME" : "SUICIDE", exit ? "LEAVE THIS MATCH?" : "END THIS LIFE?",
+      const int r = PauseCard(d, io, st, in, clicked >= 0, exit ? "EXIT GAME" : "REDEPLOY", exit ? "LEAVE THIS MATCH?" : "REDEPLOY NOW?",
                               exit ? (pm_hosting_ ? "You go back to the main menu, and your custom match ends for everyone in it."
                                                   : "You go back to the main menu. Your score in this round stays with the server.")
-                                   : "Your soldier dies and you pick a new spawn point. It counts as a death.",
+                                   : "Your soldier leaves the field and you pick a new spawn point. It counts as a death.",
                               "YES", kit::Button::kA, "NO", kit::Button::kB);
       if (r == 1) {
         REXLOG_INFO("BF pause: {} chosen (the game's own command)", exit ? "Exit Game" : "Suicide");
