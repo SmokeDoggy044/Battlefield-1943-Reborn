@@ -695,33 +695,55 @@ void CleanUpAfterUpdate() {
 }
 
 bool PrepareShadersAfterUpdate(const fs::path& cache_root, const std::string& prepared_for) {
-  if (prepared_for.empty() || prepared_for == BfVersion()) return false;
-  // A fresh set after every update (TekRantGaming, 16 Nov 2026: "make sure if the game is updated it removes it shader
-  // chashe and builds a fresh batch of shaders with the same screen then you get dropped back into our main menu").
-  // Until v0.4.7 King Kong's rule kept the cache and made every pipeline again over it. Deleted here, at the start,
-  // before PrepareShaders writes this version's list and before the renderer opens its storage:
+  // Every update deletes the player's shaders and builds a fresh set, without exception (TekRantGaming, 16 Nov 2026:
+  // "make sure if the game is updated it removes it shader chashe and builds a fresh batch of shaders"; 17 Nov 2026,
+  // after players' black bars went away with a cache deleted by hand: "every single update that we release going
+  // forward has to automatically wipe everyone's shaders and rebuild them"). Until v0.4.7 King Kong's rule kept the
+  // cache and made every pipeline again over it. Deleted here, at the start, before PrepareShaders writes this
+  // version's list and before the renderer opens its storage:
   // - native_x_renderer: the renderer's storage (5841097E.pipelines: the shaders and pipelines of this version's list
   //   and those learned in play) and DiligentCore's pipeline cache beside it (5841097E.vkcache, the driver's binaries);
   // - shaders: the prepared shaders (shareable/5841097E.xsh and the preparation's marker, so they are prepared again).
+  // Two markers say which version the cache was made by, and either one differing deletes it:
+  // - the settings' shaders_prepared_for (written once the shader page has compiled them all);
+  // - the cache's own shaders-version.txt (since v0.4.7.4), so a cache is deleted even when the settings file was
+  //   lost, reset or copied from elsewhere, and a cache with no marker at all (made before v0.4.7.4) is never kept.
   // The shader page then compiles every pipeline of this version's list from nothing. A page left before its end keeps
-  // the old marker (shaders_prepared_for), so the next start is an update again; the cache is not deleted twice for one
-  // version (cleared-for.txt), so that start goes on over what was made.
+  // the old settings marker, so the next start is an update again; the cache is not deleted twice for one version
+  // (cleared-for.txt), so that start goes on over what this version made.
   const fs::path nxr = cache_root / "native_x_renderer";
+  const fs::path shaders = cache_root / "shaders";
   const fs::path cleared = nxr / "cleared-for.txt";
+  const fs::path stamp = cache_root / "shaders-version.txt";
   std::error_code ec;
-  {
-    std::ifstream f(cleared);
-    std::string version;
-    if (std::getline(f, version) && version == BfVersion()) {
-      REXLOG_INFO("BF update: shaders were prepared for v{}, this is v{}: the cache was deleted for it at an earlier start "
-                  "whose shader page was left before its end; the shader page goes on",
-                  prepared_for, BfVersion());
-      return true;
-    }
+  auto read_line = [](const fs::path& p) {
+    std::ifstream f(p);
+    std::string line;
+    std::getline(f, line);
+    while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.pop_back();
+    return line;
+  };
+  auto write_stamp = [&] {
+    fs::create_directories(cache_root, ec);
+    std::ofstream(stamp, std::ios::trunc) << BfVersion() << "\n";
+  };
+  const bool updated = !prepared_for.empty() && prepared_for != BfVersion();
+  const std::string made_by = read_line(stamp);
+  const bool cache_there = fs::exists(nxr, ec) || fs::exists(shaders, ec);
+  const bool cache_stale = cache_there && made_by != BfVersion();
+  if (!updated && !cache_stale) {
+    if (made_by != BfVersion()) write_stamp();  // a first start: no cache yet, this version makes it
+    return false;
+  }
+  if (updated && !cache_stale && read_line(cleared) == BfVersion()) {
+    REXLOG_INFO("BF update: shaders were prepared for v{}, this is v{}: the cache was deleted for it at an earlier start "
+                "whose shader page was left before its end; the shader page goes on",
+                prepared_for, BfVersion());
+    return true;
   }
   uintmax_t files = 0, bytes = 0;
   bool failed = false;
-  for (const fs::path& dir : {nxr, cache_root / "shaders"}) {
+  for (const fs::path& dir : {nxr, shaders}) {
     if (!fs::exists(dir, ec)) continue;
     for (auto it = fs::recursive_directory_iterator(dir, ec); !ec && it != fs::recursive_directory_iterator(); it.increment(ec))
       if (it->is_regular_file(ec)) ++files, bytes += it->file_size(ec);
@@ -734,10 +756,13 @@ bool PrepareShadersAfterUpdate(const fs::path& cache_root, const std::string& pr
   }
   fs::create_directories(nxr, ec);
   std::ofstream(cleared, std::ios::trunc) << BfVersion() << "\n";
-  REXLOG_INFO("BF update: shaders were prepared for v{}, this is v{}: the old shader cache deleted ({} files, {} MB{}); "
-              "the shader page builds a fresh set",
-              prepared_for, BfVersion(), files, bytes >> 20, failed ? ", not all of it" : "");
-  return true;
+  write_stamp();
+  REXLOG_INFO("BF update: shaders were prepared for v{} and the cache made by v{}, this is v{}: the old shader cache "
+              "deleted ({} files, {} MB{}); the shader page builds a fresh set",
+              prepared_for.empty() ? "(none)" : prepared_for, made_by.empty() ? "(unmarked)" : made_by, BfVersion(),
+              files, bytes >> 20, failed ? ", not all of it" : "");
+  // Only a version change says "UPDATED TO VERSION": a lost settings file shows the first start's shader page.
+  return updated;
 }
 
 }  // namespace bf1943::update
