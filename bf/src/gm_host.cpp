@@ -34,6 +34,7 @@
 #include <rex/logging.h>
 
 #include "server_list.h"  // JsonField, JsonString; winsock2.h
+#include "private_match.h"  // HostBindPort
 #include "server_stats.h"   // each player's counts, sent with the status
 
 #if defined(_WIN32)
@@ -982,6 +983,19 @@ void WatchParent(uint32_t pid) {
     TerminateProcess(GetCurrentProcess(), 0);
   }).detach();
 }
+#else
+// Linux: the game starts its server as its own child (private_match.cpp), so the game's end shows as a new parent.
+void WatchParent(uint32_t pid) {
+  if (getppid() != pid_t(pid)) {
+    REXLOG_WARN("BF GM host: the game that started this server (PID {}) is not running: the server ends", pid);
+    _exit(0);
+  }
+  std::thread([pid] {
+    while (getppid() == pid_t(pid)) std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    REXLOG_INFO("BF GM host: the game that started this server (PID {}) ended: the server ends", pid);
+    _exit(0);
+  }).detach();
+}
 #endif
 
 // One registration with the backend, then the match until the backend's link ends (then registered again, as
@@ -999,6 +1013,9 @@ void Serve() {
   {
     const char* v = std::getenv("BF_LOOPBACK_ADDR");
     ParseAddress(std::string(v && *v ? v : "127.0.0.1") + ":1003", host.game_server);
+    // Linux: the server's own bind to 1003 got the moved port (private_match.h kHostPortShift: 31003), so its players'
+    // datagrams go there. Windows: the same port.
+    host.game_server.sin_port = bf1943::HostBindPort(host.game_server.sin_port);
   }
   Status st;
   st.listed = REXCVAR_GET(bf_gm_listed);
@@ -1199,8 +1216,8 @@ void GmHostStart() {
 #if defined(_WIN32)
     WSADATA wsa;
     WSAStartup(MAKEWORD(2, 2), &wsa);
-    if (const int parent = REXCVAR_GET(bf_gm_parent_pid); parent > 0) WatchParent(uint32_t(parent));
 #endif
+    if (const int parent = REXCVAR_GET(bf_gm_parent_pid); parent > 0) WatchParent(uint32_t(parent));
     REXLOG_INFO("BF GM host: starting (backend {}, players reach {}, {})", REXCVAR_GET(bf_gm_backend),
                 REXCVAR_GET(bf_gm_listen), REXCVAR_GET(bf_gm_listed) ? "listed" : "not listed");
     StartLanBackend();
