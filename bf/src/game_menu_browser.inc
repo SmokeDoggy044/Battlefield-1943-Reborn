@@ -220,6 +220,9 @@
     home_row_ = kRowBrowser;
   }
 
+  // A full server whose backend has the join queue (its list says "queue", 0.4.7.4): JOIN QUEUE waits for a place in
+  // it. Not a LAN match (its host's own backend has none) or a backend from before the queue: FULL, as ever.
+  static bool QueueJoinable(const ServerInfo& sv, bool lan) { return !lan && sv.queue >= 0; }
   void BrowserPage(ImDrawList* d, ImGuiIO& io, Input in) {
     NotePage("server browser");
     UpdateTick();
@@ -489,8 +492,15 @@
         d->AddRectFilled(b0, b1, sel ? IM_COL32(255, 255, 255, 70) : IM_COL32(34, 36, 27, 30));
         const float fill = sv.max_players > 0 ? std::clamp(float(sv.players) / float(sv.max_players), 0.0f, 1.0f) : 0.0f;
         if (fill > 0) d->AddRectFilled(b0, ImVec2(b0.x + bw * fill, b1.y), sel ? kit::kCream : kit::kGreen);
-        kit::GameText(d, kit::GameFont::kText, st(11), ImVec2(x + bw + st(10), y + (rh - st(11)) * 0.5f), ink,
-                      fmt::format("{} / {}", sv.players, sv.max_players));
+        const std::string count = fmt::format("{} / {}", sv.players, sv.max_players);
+        kit::GameText(d, kit::GameFont::kText, st(11), ImVec2(x + bw + st(10), y + (rh - st(11)) * 0.5f), ink, count);
+        if (sv.queue > 0) {  // the players waiting in its queue (the join queue, 0.4.7.4): "+3", in the stamp's red
+          const float qx = x + bw + st(10) + kit::GameTextWidth(kit::GameFont::kText, st(11), count) + st(5);
+          d->PushClipRect(ImVec2(qx, std::max(y, top)), ImVec2(ta.x + colx[4] - st(4), std::min(y + rh, tb.y)), true);
+          kit::GameText(d, kit::GameFont::kText, st(10), ImVec2(qx, y + (rh - st(10)) * 0.5f), sel ? kit::kCream : kit::kStamp,
+                        fmt::format("+{}", sv.queue));
+          d->PopClipRect();
+        }
       }
       // the tick rate (an older server says none)
       kit::GameText(d, kit::GameFont::kText, st(11), ImVec2(ta.x + colx[4], y + (rh - st(11)) * 0.5f), ink,
@@ -571,6 +581,7 @@
       kit::GameText(d, kit::GameFont::kText, st(13), ImVec2(pa.x + st(18), y), kit::kInk, sv->name);
       y += st(13) + st(10);
       std::string line = fmt::format("{} / {} PLAYERS", sv->players, sv->max_players);
+      if (sv->queue > 0) line += fmt::format(" \xC2\xB7 {} IN QUEUE", sv->queue);
       if (sv->ping_ms >= 0) line += fmt::format(" \xC2\xB7 {} MS", sv->ping_ms);
       if (full) line += " \xC2\xB7 FULL";
       kit::Spaced(d, f.typed, st(9.5f), ImVec2(pa.x + st(18), y), full ? kit::kStamp : kit::kInkSection, line, st(1.5f));
@@ -602,7 +613,9 @@
       row("Next map", sv->next_map.empty() ? "Not announced" : sv->next_map);
       row("Run by", sv->promoted ? "A player \xC2\xB7 promoted by TRG Studios" : sv->official ? "TRG Studios" : "A player");
       d->PopClipRect();
-      if (full) {
+      if (full && QueueJoinable(*sv, lan)) {  // a backend with the queue: a place in it (QueuePopup)
+        if (GreenButton(d, st, j0, j1, kit::Button::kA, "JOIN QUEUE")) join = true;
+      } else if (full) {
         d->AddRectFilled(j0, j1, kit::kPaperDim);
         d->AddRect(j0, j1, kit::kBorder, 0, 0, 1.0f);
         kit::GameText(d, kit::GameFont::kText, st(14), ImVec2(j0.x + st(14), j0.y + (st(40) - st(14)) * 0.5f), kit::kInkSection,
@@ -625,7 +638,7 @@
     if (in.y && sv && !lan) ToggleFavourite(*sv);
     if (in.accept && sv) join = true;
     if (join && sv) {
-      if (sv->max_players > 0 && sv->players >= sv->max_players) {
+      if (sv->Full() && !QueueJoinable(*sv, lan)) {
         BrowserNote("THAT SERVER IS FULL");
       } else {
         REXLOG_INFO("BF browser: join {} ({})", sv->name, sv->map);
