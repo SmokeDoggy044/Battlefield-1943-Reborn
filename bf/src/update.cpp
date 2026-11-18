@@ -729,8 +729,13 @@ bool PrepareShadersAfterUpdate(const fs::path& cache_root, const std::string& pr
   };
   const bool updated = !prepared_for.empty() && prepared_for != BfVersion();
   const std::string made_by = read_line(stamp);
-  const bool cache_there = fs::exists(nxr, ec) || fs::exists(shaders, ec);
-  const bool cache_stale = cache_there && made_by != BfVersion();
+  const bool have_nxr = fs::exists(nxr / "5841097E.pipelines", ec), have_shaders = fs::exists(shaders, ec);
+  const bool cache_there = fs::exists(nxr, ec) || have_shaders;
+  // Half a cache counts as none (TekRantGaming, 18 Nov 2026: he deleted cache\shaders by hand and the game went on
+  // without the shader page, its pipelines made again in a second from native_x_renderer's storage and the driver's
+  // cache beside it): either folder gone deletes the other too, and the shader page builds the whole set.
+  const bool half = cache_there && have_nxr != have_shaders;
+  const bool cache_stale = (cache_there && made_by != BfVersion()) || half;
   if (!updated && !cache_stale) {
     if (made_by != BfVersion()) write_stamp();  // a first start: no cache yet, this version makes it
     return false;
@@ -757,11 +762,13 @@ bool PrepareShadersAfterUpdate(const fs::path& cache_root, const std::string& pr
   fs::create_directories(nxr, ec);
   std::ofstream(cleared, std::ios::trunc) << BfVersion() << "\n";
   write_stamp();
-  REXLOG_INFO("BF update: shaders were prepared for v{} and the cache made by v{}, this is v{}: the old shader cache "
+  REXLOG_INFO("BF update: shaders were prepared for v{} and the cache made by v{}, this is v{}{}: the old shader cache "
               "deleted ({} files, {} MB{}); the shader page builds a fresh set",
               prepared_for.empty() ? "(none)" : prepared_for, made_by.empty() ? "(unmarked)" : made_by, BfVersion(),
+              half ? fmt::format(" and only its {} folder was there", have_nxr ? "native_x_renderer" : "shaders") : "",
               files, bytes >> 20, failed ? ", not all of it" : "");
-  // Only a version change says "UPDATED TO VERSION": a lost settings file shows the first start's shader page.
+  // Only a version change says "UPDATED TO VERSION": a lost settings file or half a cache shows the first start's
+  // shader page (CheckShadersAfterUpdate: the renderer's storage is gone).
   return updated;
 }
 
