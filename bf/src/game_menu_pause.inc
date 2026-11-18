@@ -230,7 +230,10 @@
         pause_page_ = 1 - pause_page_;
         REXLOG_INFO("BF pause: page {}", pause_page_ == 0 ? "map" : "field report");
       }
-      // The tabs: LB, MAP, FIELD REPORT, RB; the page shown in cream over a red rule, a click on a name opens it.
+      // The tabs: LB, MAP, FIELD REPORT, RB; the page shown in cream over a red rule, a click on a name opens it. Over
+      // a dark band as the column's, so the game's score bars behind (the HUD's top) do not show through the names.
+      d->AddRectFilled(ImVec2(px0 - st(8), tab_y - st(20)), ImVec2(std::min(px1, rst.P(1012, 0).x), top - st(2)),
+                      IM_COL32(13, 15, 11, 236));  // up to the player's card at the right
       float tx = px0;
       const float gh = st(18);
       tx += kit::Glyph(d, PromptStyle(), kit::Button::kLB, KeyFor(kit::Button::kLB), ImVec2(tx, tab_y + st(10)), gh) + st(12);
