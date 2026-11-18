@@ -40,7 +40,7 @@ constexpr const wchar_t* kPageBase = L"https://news.bf1943reborn.example/";
 
 // The player page: YouTube's IFrame Player API (the official embed), privacy enhanced host, autoplay with the sound
 // asked for; bfMute(on) from the game. Its address gives the embed its referrer (YouTube's error 153 without one).
-constexpr const char* kPlayerPage = R"(<!doctype html>
+constexpr const char* kPlayerPage = R"page(<!doctype html>
 <html><head><meta charset="utf-8"><meta name="referrer" content="strict-origin-when-cross-origin">
 <style>html,body{margin:0;width:100%;height:100%;background:#000;overflow:hidden}#p,iframe{border:0;width:100%;height:100%;display:block}</style>
 </head><body><div id="p"></div>
@@ -63,10 +63,13 @@ function say(what) {
   try { window.chrome.webview.postMessage(what + (player && player.isMuted ? (player.isMuted() ? ' muted' : ' sound on') : '')); } catch (e) {}
 }
 function bfMute(on) { muted = on; if (player && player.mute) { if (on) player.mute(); else player.unMute(); } }
+// No internet, or YouTube out of reach: the player's API never comes (the game shows its own message instead).
+var started = false;
+setTimeout(function () { if (!started) say('error offline'); }, 15000);
 </script>
-<script src="https://www.youtube.com/iframe_api"></script>
+<script src="https://www.youtube.com/iframe_api" onload="started = true" onerror="say('error offline')"></script>
 </body></html>
-)";
+)page";
 
 std::wstring Wide(const std::string& s) {
   if (s.empty()) return {};
@@ -182,6 +185,7 @@ struct State {
   bool muted = false, shown_muted = false;
   bool visible = false;
   bool ended = false;          // the player said it ended, paused or failed (the menu music may play again)
+  bool broken = false;         // the player said it failed (no internet, or YouTube refused the video)
   bool escape = false, refocus = false;
   std::filesystem::path page_dir;
   std::filesystem::path data_dir;
@@ -206,14 +210,14 @@ void ReleaseView() {
     g.ctl->Release();
   }
   if (g.view) g.view->Release();
-  g.ctl = nullptr, g.view = nullptr, g.visible = false, g.shown_id.clear(), g.shown_rect = {};
+  g.ctl = nullptr, g.view = nullptr, g.visible = false, g.broken = false, g.shown_id.clear(), g.shown_rect = {};
 }
 
 void Navigate() {
   if (!g.view) return;
   const std::wstring url = std::wstring(kPageBase) + L"player.html?v=" + Wide(g.id) + L"&mute=" + (g.muted ? L"1" : L"0");
   const HRESULT hr = g.view->Navigate(url.c_str());
-  g.shown_id = g.id, g.shown_muted = g.muted, g.ended = false;
+  g.shown_id = g.id, g.shown_muted = g.muted, g.ended = false, g.broken = false;
   REXLOG_INFO("BF news video: playing {} ({}{})", g.id, g.muted ? "muted" : "with sound", SUCCEEDED(hr) ? "" : ", the navigation failed");
 }
 
@@ -296,6 +300,7 @@ void SetupView() {
           CoTaskMemFree(text);
           // 0 ended, 2 paused, an error: no longer playing; 1 playing, 3 buffering: playing again.
           if (said.rfind("state 0", 0) == 0 || said.rfind("state 2", 0) == 0 || said.rfind("error", 0) == 0) g.ended = true;
+          if (said.rfind("error", 0) == 0) g.broken = true;
           else if (said.rfind("state 1", 0) == 0 || said.rfind("state 3", 0) == 0) g.ended = false;
         }
         return S_OK;
@@ -457,6 +462,8 @@ bool VideoShowing() { return g.ctl && g.visible; }
 
 bool VideoPlaying() { return VideoShowing() && !g.ended; }
 
+bool VideoFailed() { return g.broken; }
+
 bool VideoTakeEscape() {
   const bool e = g.escape;
   g.escape = false;
@@ -471,6 +478,7 @@ void VideoHide() {}
 void VideoSetMuted(bool) {}
 bool VideoShowing() { return false; }
 bool VideoPlaying() { return false; }
+bool VideoFailed() { return false; }
 bool VideoTakeEscape() { return false; }
 
 #endif

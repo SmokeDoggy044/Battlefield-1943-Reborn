@@ -633,13 +633,15 @@
                                                                     {kit::Button::kX, "Use this folder"},
                                                                     {kit::Button::kRB, "Places"},
                                                                     {kit::Button::kB, "Back"}}
-                                                 : std::vector<Cue>{{kit::Button::kA, "Choose game files"},
+                                                 : std::vector<Cue>{{kit::Button::kA, files_card_ == 2 ? "Watch" : "Choose game files"},
                                                                     {kit::Button::kX, "Choose a folder"},
                                                                     {kit::Button::kY, "Where do I find them?"},
+                                                                    {kit::Button::kStart, "Video tutorial"},
                                                                     {kit::Button::kB, "Quit"}};
     Prompts(d, st, st.P(150, 720 - 30 - 42), prompts, in);
-    const ImVec2 a = st.P(150, 86), b = st.P(1130, 520);
-    int act = -1;  // 0 the package, 1 a folder
+    // 0.4.7.4: the paper taller for the video tutorial's button (game_menu_tutorial.inc) over the two cards.
+    const ImVec2 a = st.P(150, 70), b = st.P(1130, 566);
+    int act = -1;  // 0 the package, 1 a folder, 2 the video tutorial
     {
       kit::Turn turn(d, ImVec2((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f), -0.4f);
       kit::Paper(d, a, b, st.u);
@@ -658,7 +660,38 @@
       static const char* kTitles[] = {"Your game package", "An unpacked game folder"};
       static const char* kLines[] = {"The single file in 5841097E\\000D0000, from your console's drive or a backup you made",
                                      "A folder holding default.xex"};
-      if (!busy && !browsing_ && (in.left || in.right || in.up || in.down)) files_card_ = 1 - files_card_;
+      // The video tutorial (TekRantGaming, 18 Nov 2026): a long button over the two cards, as wide as both; up from
+      // the cards reaches it, down goes back to them.
+      if (!busy && !browsing_) {
+        if (in.up && files_card_ != 2) files_card_ = 2;
+        else if (in.down && files_card_ == 2) files_card_ = 0;
+        else if ((in.left || in.right) && files_card_ != 2) files_card_ = 1 - files_card_;
+      }
+      {
+        const ImVec2 t0(x, y), t1(x + w, y + st(46));
+        const bool hover = !busy && !browsing_ && ImGui::IsMouseHoveringRect(t0, t1);
+        if (hover && io.MouseDelta.x + io.MouseDelta.y != 0) files_card_ = 2;
+        const bool sel = files_card_ == 2;
+        if (sel) {
+          d->AddRectFilled(ImVec2(t0.x, t0.y + st(5)), ImVec2(t1.x, t1.y + st(5)), kit::kGreenShadow);
+          d->AddRectFilled(t0, t1, kit::kGreen);
+        } else {
+          d->AddRectFilled(t0, t1, kit::kPaperCard);
+          d->AddRect(t0, t1, kit::kBorder, 0, 0, st(2));
+        }
+        const ImU32 ink = sel ? IM_COL32(255, 255, 255, 255) : kit::kInk;
+        NewsPlayMark(d, ImVec2(t0.x + st(36), (t0.y + t1.y) * 0.5f), st(22));
+        const float cap = st(20);
+        kit::GameText(d, kit::GameFont::kHeadline, cap, ImVec2(t0.x + st(68), (t0.y + t1.y - cap) * 0.5f), ink, "WATCH VIDEO TUTORIAL", st(1));
+        const kit::Style style = PromptStyle();
+        const float gw = kit::Glyph(nullptr, style, kit::Button::kStart, KeyFor(kit::Button::kStart), ImVec2(0, 0), st(22), false);
+        kit::Glyph(d, style, kit::Button::kStart, KeyFor(kit::Button::kStart), ImVec2(t1.x - st(16) - gw, (t0.y + t1.y) * 0.5f), st(22));
+        const std::string note = "3 MINUTES \xC2\xB7 A FAN MADE GUIDE BY LEOTSEIL GAMING";
+        kit::Spaced(d, f.typed, st(11), ImVec2(t1.x - st(32) - gw - kit::SpacedWidth(f.typed, st(11), note, st(1.5f)), (t0.y + t1.y) * 0.5f - st(7)),
+                    sel ? IM_COL32(255, 255, 255, 220) : kit::kInkFaint, note, st(1.5f));
+        if (hover && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) act = 2;
+        y = t1.y + st(16);
+      }
       for (int i = 0; i < 2; ++i) {
         const ImVec2 c0(x + float(i) * (cw + st(22)), y), c1(c0.x + cw, y + ch);
         const bool hover = !busy && !browsing_ && ImGui::IsMouseHoveringRect(c0, c1);
@@ -724,6 +757,11 @@
       }
       if (in.accept) act = files_card_;
       if (in.x) act = 1;
+      if (in.start) act = 2;
+      if (act == 2) {
+        OpenTutorial(in.start ? "Start or P" : in.accept ? "A or Enter" : "a click");
+        return;
+      }
 #if defined(BF_DEV_TOOLS)
       // BF_DEV_SETUP_PICK=<path> (tests): picked for the player a few seconds after the page shows.
       static bool dev_picked = false;
