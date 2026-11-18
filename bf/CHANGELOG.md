@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.4.7.4 (18 November 2026): a hotfix
+
+**Known issues, please read**
+- **Invisible players or black textures.** We are aware that some players can become invisible, or some textures can
+  turn black. This has been investigated and worked on. If it happens to you, go to Settings, Graphics and choose
+  **Rebuild shaders**: your shaders are built again the next time the game starts, and this should fix it. If it does
+  not, please be patient for the next hotfix.
+- **Can't load into a server?** Third party overlays such as RivaTuner, Overwolf and others can stop the game joining.
+  Turn them off if you cannot load into a server.
+- **Bots:** please check the FAQ in our Discord about bots coming to the game.
+
+**New**
+- **A bigger map in the pause menu.** The pause now opens on a large map of the whole battle. LB and RB (Q and E)
+  switch to the Field Report, and X zooms in on the island.
+- **Server queues.** Join a full server and you get a place in its queue, with a popup showing your position as it
+  moves up, and a Close button to leave it. You join by yourself when your turn comes. The server browser shows each
+  server's queue and offers Join Queue on a full one.
+- **Rebuild shaders,** in Settings, Graphics: deletes your saved shaders and builds them again at the next start.
+- **A new achievement sound,** made on your PC from the Battlefield theme in your own game files.
+- **Watch video tutorial.** The first screen that asks for your game files has a button that plays our setup video
+  right in the launcher.
+- **A trademark sign in your name.** Your soldier name can now end with one ™ (Alt+0153, paste it, or the ™ key on the
+  controller keyboard).
+- **VSync switches at once,** with no restart, and the frame limit follows your screen's refresh rate. By DiXN
+  ([pull request 46](../../pull/46)).
+- **Linux: host your own Custom Match,** online or on your LAN. By SmokeDoggy044 ([pull request 48](../../pull/48)).
+
+**Changes**
+- **Suicide is now REDEPLOY** in the pause menu.
+- **Community servers we vouch for** now read TRUSTED COMMUNITY SERVER, and ours read REBORN OFFICIAL SERVER.
+- **Server owners:** the server manager's Settings has an Automatic updates switch, on by default. If you turn it off,
+  updated players may not be able to join until you update.
+
+**Fixes**
+- **Fresh shaders after every update.** Each update now deletes all your saved shaders and builds them again, even if
+  your settings were reset, and a half deleted shader folder is built again in full.
+- **Sound:** plane engines no longer drop out every few seconds ([pull request 49](../../pull/49)), the Effects volume
+  now covers gunfire too ([pull request 50](../../pull/50)), and sounds are no longer cut short at their end
+  ([pull request 52](../../pull/52)). By SmokeDoggy044.
+- **Smoother rendering:** more of the drawing work spread across your CPU, and faster lookups. By DiXN.
+- **Linux:** VSync no longer stalls a hidden window, and Wayland is used where it is available. By DiXN.
+- **HD textures** are taken out of Settings for now.
+- **General bug fixes.**
+
 ## 0.4.7.3 (17 November 2026): a hotfix
 
 - **Mute any player's voice** from the scoreboard or the end of round screen: a speaker in each row lights while they
