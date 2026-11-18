@@ -129,18 +129,22 @@ bool XmaContext::Work() {
       static_cast<int32_t>(effective_sdc) + data.output_buffer_padding;
 
   if (minimum_subframe_decode_count > remaining_subframe_blocks_in_output_buffer_) {
+    FlushTailAtStreamEnd(&output_rb, &data);
+    data.output_buffer_write_offset = output_rb.write_offset() / kOutputBytesPerBlock;
     StoreContextMerged(data, initial_data, context_ptr);
     return true;
   }
 
   while (remaining_subframe_blocks_in_output_buffer_ >= minimum_subframe_decode_count) {
+    input_stalled_ = false;
     Decode(&data);
     Consume(&output_rb, &data);
 
-    if (!data.IsAnyInputBufferValid() || data.error_status == 4) {
+    if (!data.IsAnyInputBufferValid() || data.error_status == 4 || input_stalled_) {
       break;
     }
   }
+  FlushTailAtStreamEnd(&output_rb, &data);
 
   data.output_buffer_write_offset = output_rb.write_offset() / kOutputBytesPerBlock;
 
@@ -214,6 +218,7 @@ void XmaContext::ResetDecoderState() {
   current_frame_remaining_subframes_ = 0;
   loop_frame_output_limit_ = 0;
   loop_start_skip_pending_ = false;
+  silence_pad_blocks_ = 0;
 }
 
 void XmaContext::Disable() {
@@ -425,6 +430,67 @@ void XmaContext::StoreContextMerged(const XMA_CONTEXT_DATA& data,
   fresh.output_buffer_read_offset = data.output_buffer_read_offset;
 
   fresh.Store(context_ptr);
+}
+
+// End of a non-looping stream: the input has run out with the last decoded frame's samples still held back (the
+// start-padding realignment keeps them for the next frame's head, and none is coming). Written out, then two frames of
+// silence, once the guest has nearly read what is there. A guest that plays a voice's exact length asks for these
+// samples: EA's XMA decoder in BF1943 (821B0F08) gives a voice up the moment the output is short after it fed and
+// kicked the context, re-initialises it and plays the rest as silence (~7 times a second in a match without this).
+// Mid-stream the guest feeds before it kicks, so the input is only empty here at a stream's end or a real underrun.
+void XmaContext::FlushTailAtStreamEnd(memory::RingBuffer* output_rb, const XMA_CONTEXT_DATA* data) {
+  WriteSilencePad(output_rb, data);
+  if (data->IsAnyInputBufferValid() || data->loop_count != 0 || !carry_valid_ ||
+      current_frame_remaining_subframes_) {
+    return;
+  }
+  const size_t frame_bytes = kBytesPerFrameChannel << data->is_stereo;
+  const size_t capacity = output_rb->capacity();
+  const size_t unread =
+      capacity ? (output_rb->write_offset() + capacity - output_rb->read_offset()) % capacity : 0;
+  // The guest moves its read offset in whole frames (821B0F08 rounds its position down to 512 samples), so up to a
+  // frame it has already used still counts as unread: wait until under two.
+  if (unread >= 2 * frame_bytes) {
+    return;
+  }
+  const size_t pad_bytes = kDecoderStartPadding * kBytesPerSample << data->is_stereo;
+  const size_t carry_bytes = frame_bytes - pad_bytes;
+  const uint8_t blocks =
+      static_cast<uint8_t>((carry_bytes + kOutputBytesPerBlock - 1) / kOutputBytesPerBlock);
+  if (remaining_subframe_blocks_in_output_buffer_ < int32_t(blocks + data->output_buffer_padding)) {
+    return;  // the next pass, once the guest has read more
+  }
+  std::memset(raw_frame_.data(), 0, raw_frame_.size());
+  std::memcpy(raw_frame_.data(), carry_frame_.data(), carry_bytes);
+  current_frame_remaining_subframes_ = static_cast<uint8_t>(4 << data->is_stereo);
+  loop_frame_output_limit_ = blocks;  // Consume stops after the tail's blocks
+  while (current_frame_remaining_subframes_ && remaining_subframe_blocks_in_output_buffer_ > 0) {
+    Consume(output_rb, data);
+  }
+  current_frame_remaining_subframes_ = 0;
+  loop_frame_output_limit_ = 0;
+  carry_valid_ = false;
+  // The hardware's output runs on past the last frame, and EA asks a little beyond the decoded length.
+  silence_pad_blocks_ = int32_t(2 * frame_bytes / kOutputBytesPerBlock);
+  WriteSilencePad(output_rb, data);
+}
+
+// Silence after a flushed tail, as room allows, while the input stays empty (new input cancels it).
+void XmaContext::WriteSilencePad(memory::RingBuffer* output_rb, const XMA_CONTEXT_DATA* data) {
+  if (silence_pad_blocks_ <= 0) {
+    return;
+  }
+  if (data->IsAnyInputBufferValid()) {
+    silence_pad_blocks_ = 0;
+    return;
+  }
+  static const std::array<uint8_t, kOutputBytesPerBlock> kZeros{};
+  while (silence_pad_blocks_ > 0 &&
+         remaining_subframe_blocks_in_output_buffer_ > int32_t(data->output_buffer_padding)) {
+    output_rb->Write(kZeros.data(), kOutputBytesPerBlock);
+    --remaining_subframe_blocks_in_output_buffer_;
+    --silence_pad_blocks_;
+  }
 }
 
 void XmaContext::Consume(memory::RingBuffer* output_rb, const XMA_CONTEXT_DATA* data) {
@@ -645,7 +711,11 @@ void XmaContext::Decode(XMA_CONTEXT_DATA* data) {
       const uint8_t* next_packet =
           GetNextPacket(data, next_packet_index, current_input_packet_count);
       if (!next_packet) {
-        data->error_status = 4;
+        // The frame runs on into the other input buffer, which the guest has not made valid yet: wait for it, and go
+        // on from here at the next kick. Not an error: error 4 was never cleared, so every later pass of the stream
+        // decoded one frame only, and EA's XMA decoder in BF1943 (821B0F08) gives a voice up when its first read
+        // after a mid-sound start needs more than that (up to 767 samples): about one sound a minute was cut short.
+        input_stalled_ = true;
         return;
       }
       std::memcpy(input_buffer_.data() + kBytesPerPacketData, next_packet + kBytesPerPacketHeader,
