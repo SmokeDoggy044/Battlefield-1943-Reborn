@@ -78,6 +78,10 @@ struct ServerInfo {
   // and never found, since v0.4.0's game plays the original everywhere and would be pulled about on it.
   bool retired_mode = false;
   int players = 0, max_players = 0;
+  // Players waiting in its queue (0.4.7.4, server/plasma.py QUEUE); -1: a backend without the queue (a full server
+  // there is refused, and the browser does not offer it).
+  int queue = -1;
+  bool Full() const { return max_players > 0 && players >= max_players; }
   std::string description, next_map;
   // Listed with the Reborn servers: "official" from the backend. A promoted community server (TekRantGaming, 16 Nov
   // 2026: someone else's machine he shows with ours, and can send back to the Community tab) says "promoted" too: it
@@ -514,6 +518,7 @@ class ServerList {
     s.retired_mode = JsonField(obj, "mode") == "modern";
     s.players = std::atoi(JsonField(obj, "players").c_str());
     s.max_players = std::atoi(JsonField(obj, "max_players").c_str());
+    if (const std::string q = JsonField(obj, "queue"); !q.empty()) s.queue = std::atoi(q.c_str());
     s.description = JsonField(obj, "description");
     TakeDescriptionTags(s);
     s.next_map = JsonField(obj, "next_map");
