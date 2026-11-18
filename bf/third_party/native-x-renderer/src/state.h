@@ -62,7 +62,20 @@ struct RegisterRecord {
     data.insert(data.end(), source, source + count);
   }
   // Joins the kValues run it continues when that is the last one.
-  void Value(uint32_t reg, uint32_t value);
+  void Value(uint32_t reg, uint32_t value) {
+    if (values_at_ < data.size()) {
+      uint32_t count = data[values_at_] & 0xFFFFFF;
+      if (data[values_at_ + 1] + count == reg && values_at_ + 2 + count == data.size()) {
+        ++data[values_at_];
+        data.push_back(value);
+        return;
+      }
+    }
+    values_at_ = data.size();
+    data.push_back((uint32_t(kValues) << 24) | 1);
+    data.push_back(reg);
+    data.push_back(value);
+  }
   void Clear() {
     data.clear();
     values_at_ = SIZE_MAX;
@@ -85,6 +98,7 @@ struct PacketScan {
   // (register, value), in order: type-0/1 writes and SET_CONSTANT*, from the ring and from the indirect
   // buffers it calls. Bin-predicated packets (per tile) are not included.
   std::vector<std::pair<uint32_t, uint32_t>> writes;
+  std::vector<uint32_t> constants;
   // Register writes in bin-predicated packets (per tile: window offsets, the occlusion query's sample
   // count address), in order. Not applied to the register file.
   std::vector<std::pair<uint32_t, uint32_t>> predicated_writes;
@@ -130,11 +144,9 @@ struct TrackedCall {
   // new segment has begin > end, or a range much longer than its packets.
   uint32_t begin = 0, end = 0;
   const PacketScan* scan = nullptr;
-  // A draw replayed from a recorded command buffer (LeaveReplay): the surfaces the recording device had bound when it
-  // recorded it (4 color, then depth; object 0 none), as they were then, with has_surfaces; else the device's bound ones
-  // count.
-  bool has_surfaces = false;
-  std::array<SurfaceSnapshot, 5> surfaces{};
+  // A draw replayed from a recorded command buffer (LeaveReplay): FindRecordedDraw has the surfaces the recording device
+  // had bound when it recorded it.
+  bool replayed = false;
 };
 
 // The draws recorded on recording devices (DeviceLayout::recording_flags), by the GPU address range of their packets,
@@ -231,6 +243,28 @@ class StateTracker {
   const Program* pixel_program_ptr() const { return programs_[1]; }
   static const Program kNoProgram;
 
+  struct ReplayDraw {
+    std::vector<uint32_t> record;
+    uint32_t begin = 0;
+    const Program* programs[2] = {};
+  };
+  struct ReplayJob {
+    Call call{};
+    uint32_t device = 0, scan_from = 0, end = 0;
+    std::vector<uint32_t> record;
+    std::vector<ReplayDraw> draws;
+    size_t draw_count = 0;
+  };
+  bool TakeReplay(Call call, const uint8_t* base, ReplayJob& job);
+  void RunReplay(ReplayJob& job, const uint8_t* base);
+  void MergeReplay(const StateTracker& worker);
+  void GiveRecord(std::vector<uint32_t>& from) {
+    record_.data.insert(record_.data.begin(), from.begin(), from.end());
+    record_.values_at_ = SIZE_MAX;
+    from.clear();
+  }
+  void set_sync(void (*sync)(StateTracker&)) { sync_ = sync; }
+
  private:
   struct Pending {
     bool active = false;  // an outermost device call being tracked
@@ -252,6 +286,8 @@ class StateTracker {
   void Send(uint32_t first_register, const uint8_t* source, uint32_t count);
   // Into record_: a value written by a packet, if it differs from image_.
   void SendValue(uint32_t reg, uint32_t value);
+  struct Direct;
+  bool Known(uint32_t first, uint32_t count = 1);
   // The fetch constant dwords packets wrote outside the flush (fetch_override_), as bits: dword i is bit i % 64
   // of word i / 64.
   void SetOverridden(uint32_t dword, bool on) {
@@ -298,6 +334,8 @@ class StateTracker {
   } inline_begin_;
   PacketScan scan_;
   TrackedCall last_;
+  std::vector<uint64_t> known_;
+  void (*sync_)(StateTracker&) = nullptr;
 };
 
 }  // namespace native_x_renderer

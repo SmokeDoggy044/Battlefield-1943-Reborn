@@ -14,18 +14,6 @@
 #include "cpu_cores.h"
 
 namespace native_x_renderer {
-namespace {
-
-void Pause() {
-#if defined(_M_X64) || defined(__x86_64__)
-  _mm_pause();
-#else
-  std::this_thread::yield();
-#endif
-}
-
-}  // namespace
-
 void Recorder::Initialize(Diligent::IDeviceContext* context) {
   context_ = context;
   if (!write_block_) write_block_ = read_block_ = NewBlock(kBlockSize);

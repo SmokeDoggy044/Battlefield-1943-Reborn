@@ -38,6 +38,7 @@ std::vector<DisplayMode> ListDisplayModes(int monitor, const rex::ui::Window* wi
 
 // The display's mode on the desktop (width 0 when unknown). UI thread.
 DisplayMode DesktopDisplayMode(int monitor, const rex::ui::Window* window);
+DisplayMode CurrentDisplayMode(int monitor, const rex::ui::Window* window);
 
 // The highest refresh rate in `modes` at width x height (0 when there is no mode of that size).
 float HighestRefreshAt(const std::vector<DisplayMode>& modes, int width, int height);

@@ -105,6 +105,7 @@ class Device {
   void ApplyPresentMode();
   // native_x_renderer_present_mode, or "vsync" while ForceVsync is on.
   std::string WantedPresentMode() const;
+  bool VsyncMailbox() const;
   std::string present_mode_;
   bool present_mode_applied_ = false;
   bool force_vsync_ = false;
@@ -114,6 +115,7 @@ class Device {
   // change or the window's new size): the GPU waited for, the swap chain released and a new one made from nothing, as
   // at the start, and V-Sync from then on (a present mode change is such a remake). False when none could be made.
   bool RebuildSwapChain(const char* where, const char* what);
+  bool RemakeSwapChain();
   bool vsync_fallback_ = false;
   uint32_t rebuilds_ = 0;
   // D159: a size the surface did not take (UpdateSize), not asked for again until the SDK's size changes.

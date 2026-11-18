@@ -194,17 +194,29 @@ HostTarget* RenderTargets::FindColorOverDepth(const GuestSurface& s, Kind kind, 
   constexpr uint32_t k8888 = uint32_t(xenos::ColorRenderTargetFormat::k_8_8_8_8);
   // The targets are ordered by their key: the single-sampled k_8_8_8_8 color ones at this base and pitch are one run
   // (any size first: none is 0x0). Every draw with depth asks (D122: walking them all was 1 % of the renderer).
-  HostTarget* found = nullptr;
-  Key from{SurfaceTuple{false, s.edram_base(), s.pitch(), 0, k8888, 0, 0}, Kind::kRender};
-  for (auto it = targets_.lower_bound(from); it != targets_.end(); ++it) {
-    const SurfaceTuple& t = std::get<0>(it->first);
-    if (std::get<0>(t) || std::get<1>(t) != s.edram_base() || std::get<2>(t) != s.pitch() || std::get<3>(t) != 0 ||
-        std::get<4>(t) != k8888) {
-      break;
+  const uint32_t base = s.edram_base(), pitch = s.pitch();
+  ColorRun* run = nullptr;
+  for (ColorRun& r : color_runs_) {
+    if (r.generation == targets_generation_ && r.base == base && r.pitch == pitch && r.kind == kind) run = &r;
+  }
+  if (!run) {
+    run = &color_runs_[color_run_next_++ % color_runs_.size()];
+    run->base = base, run->pitch = pitch, run->kind = kind, run->generation = targets_generation_;
+    run->targets.clear();
+    Key from{SurfaceTuple{false, base, pitch, 0, k8888, 0, 0}, Kind::kRender};
+    for (auto it = targets_.lower_bound(from); it != targets_.end(); ++it) {
+      const SurfaceTuple& t = std::get<0>(it->first);
+      if (std::get<0>(t) || std::get<1>(t) != base || std::get<2>(t) != pitch || std::get<3>(t) != 0 ||
+          std::get<4>(t) != k8888) {
+        break;
+      }
+      if (std::get<1>(it->first) == kind) run->targets.push_back(&it->second);
     }
-    HostTarget& target = it->second;
-    if (std::get<1>(it->first) != kind || !target.texture || target.written <= written) continue;
-    if (!found || target.written > found->written) found = &target;
+  }
+  HostTarget* found = nullptr;
+  for (HostTarget* target : run->targets) {
+    if (!target->texture || target->written <= written) continue;
+    if (!found || target->written > found->written) found = target;
   }
   return found;
 }
@@ -226,12 +238,20 @@ HostTarget* RenderTargets::Get(const GuestSurface& s, Kind kind) {
   Key key{SurfaceKey(s), kind};
   uint32_t guest_format = std::get<4>(std::get<0>(key));
   bool reduced = kind == Kind::kReduced, shadow = kind == Kind::kShadow;
+  for (auto& [k, t] : recent_) {
+    if (t && k == key) {
+      t->last_used = frame_;
+      return t->texture ? t : nullptr;
+    }
+  }
   auto it = targets_.find(key);
   if (it != targets_.end()) {
     it->second.last_used = frame_;
+    recent_[recent_next_++ % recent_.size()] = {key, &it->second};
     return it->second.texture ? &it->second : nullptr;
   }
   HostTarget& target = targets_[key];
+  ++targets_generation_;
   target.last_used = frame_;
   target.created_frame = frame_;
 
@@ -407,7 +427,7 @@ void ResolvedTextures::Invalidate(ResolvedTexture& texture, bool cpu_write, uint
   texture.invalidated = true;
   texture.watched = false;
   texture.recheck_frame = 0;
-  ++generation_;
+  Changed(texture.address);
   ++invalidated_;
   NoteGone(texture, false);
   if (logged_invalidations_ < 32) {
@@ -481,8 +501,9 @@ void ResolvedTextures::RecheckKept() {
 
 void ResolvedTextures::Touch(ResolvedTexture* texture, uint32_t guest_bytes) {
   ApplyInvalidations();  // what happened before this resolve
+  if (!texture->last_resolve_frame || texture->guest_bytes != guest_bytes) index_dirty_ = true;
   texture->last_resolve = ++counter_;
-  ++generation_;
+  Changed(texture->address);
   texture->last_used = frame_;
   texture->last_resolve_frame = frame_;
   texture->invalidated = false;
@@ -514,7 +535,7 @@ ResolvedTexture* ResolvedTextures::GetOrCreate(uint32_t address, uint32_t guest_
   auto it = textures_.find(key);
   if (it != textures_.end()) return it->second.texture ? &it->second : nullptr;
   ResolvedTexture& texture = textures_[key];
-  ++generation_;
+  Changed(address);
   texture.last_used = frame_;
   TEXTURE_FORMAT format = HostTextureFormat(guest_format);
   if (format == TEX_FORMAT_UNKNOWN) {
@@ -582,7 +603,10 @@ ResolvedTexture* ResolvedTextures::FindNewest(uint32_t address, bool cube) { ret
 ResolvedTexture* ResolvedTextures::Newest(uint32_t address, uint32_t cube) {
   ApplyInvalidations();
   NewestFound& found = newest_[((address >> 12) ^ cube) & 255];
-  if (found.generation == generation_ && found.address == address && found.cube == cube) return found.texture;
+  if (found.address == address && found.cube == cube &&
+      found.generation >= std::max(changed_[(address >> 12) & 1023], freed_generation_)) {
+    return found.texture;
+  }
   ResolvedTexture* newest = nullptr;
   for (auto it = textures_.lower_bound(Key{address, 0, 0, 0, 0, false, false});
        it != textures_.end() && std::get<0>(it->first) == address; ++it) {
@@ -643,7 +667,11 @@ uint64_t ResolvedTextures::bytes() const {
   return bytes;
 }
 
-Freed RenderTargets::EndFrame(uint64_t unused_frames) { return FreeUnused(targets_, frame_, unused_frames); }
+Freed RenderTargets::EndFrame(uint64_t unused_frames) {
+  const Freed freed = FreeUnused(targets_, frame_, unused_frames);
+  if (freed.count) recent_ = {}, ++targets_generation_;
+  return freed;
+}
 
 Freed ResolvedTextures::EndFrame(uint64_t unused_frames, uint64_t keep_bytes) {
   Freed freed;
@@ -680,7 +708,7 @@ Freed ResolvedTextures::EndFrame(uint64_t unused_frames, uint64_t keep_bytes) {
     total -= entry_bytes(texture);
     textures_.erase(it);
   }
-  if (freed.count) ++generation_;
+  if (freed.count) freed_generation_ = ++generation_, index_dirty_ = true;
   return freed;
 }
 
@@ -691,8 +719,8 @@ void ResolvedTextures::NoteGone(const ResolvedTexture& texture, bool freed) {
 }
 
 ResolvedTexture* ResolvedTextures::VertexSource(uint32_t begin, uint32_t size) {
-  if (index_generation_ != generation_) {
-    index_generation_ = generation_;
+  if (index_dirty_) {
+    index_dirty_ = false;
     index_.clear();
     for (auto& [key, texture] : textures_) {
       if (!texture.texture || !texture.last_resolve_frame || !texture.guest_bytes) continue;

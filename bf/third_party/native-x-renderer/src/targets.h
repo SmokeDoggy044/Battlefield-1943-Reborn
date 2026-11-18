@@ -172,6 +172,17 @@ class RenderTargets {
   bool depth_unorm24_ = true;  // the device has D24_UNORM_S8_UINT depth targets (D103)
   RenderScale scale_, reduced_scale_, shadow_scale_;
   std::map<Key, HostTarget> targets_;
+  std::array<std::pair<Key, HostTarget*>, 8> recent_{};
+  uint32_t recent_next_ = 0;
+  struct ColorRun {
+    uint32_t base = 0, pitch = 0;
+    Kind kind{};
+    uint64_t generation = 0;
+    std::vector<HostTarget*> targets;
+  };
+  std::array<ColorRun, 4> color_runs_{};
+  uint32_t color_run_next_ = 0;
+  uint64_t targets_generation_ = 1;
   std::set<SurfaceTuple> shadow_surfaces_;
   uint64_t frame_ = 0;
 };
@@ -330,14 +341,18 @@ class ResolvedTextures {
   Diligent::IRenderDevice* device_ = nullptr;
   RenderScale scale_, shadow_scale_;
   std::map<Key, ResolvedTexture> textures_;
-  // VertexSource's index: (address, end, texture), by address; as of index_generation_.
+  // VertexSource's index: (address, end, texture), by address; rebuilt when index_dirty_.
   struct Span {
     uint32_t address;
     uint64_t end;
     ResolvedTexture* texture;
   };
   std::vector<Span> index_;
-  uint64_t index_generation_ = 0;
+  bool index_dirty_ = true;
+  // Newest's look-ups, valid while no texture at their address (by its slot in changed_) changed and none was freed.
+  void Changed(uint32_t address) { changed_[(address >> 12) & 1023] = ++generation_; }
+  std::array<uint64_t, 1024> changed_{};
+  uint64_t freed_generation_ = 0;
   struct NewestFound {
     uint32_t address = 0;
     uint32_t cube = 0;

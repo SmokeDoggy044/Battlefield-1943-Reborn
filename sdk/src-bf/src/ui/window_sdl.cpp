@@ -693,6 +693,11 @@ DisplayMode GetDesktopDisplayMode(int monitor, const Window* window) {
   return mode ? ToPixels(*mode) : DisplayMode{};
 }
 
+DisplayMode GetCurrentDisplayMode(int monitor, const Window* window) {
+  const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(DisplayFor(monitor, SdlWindowOf(window)));
+  return mode ? ToPixels(*mode) : DisplayMode{};
+}
+
 bool SetFullscreenDisplayMode(Window* window, int monitor, int width, int height, float refresh_rate,
                               DisplayMode* chosen) {
   SDL_Window* sdl_window = SdlWindowOf(window);

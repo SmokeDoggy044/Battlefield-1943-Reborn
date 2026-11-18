@@ -56,6 +56,10 @@ bool SDLWindowedAppContext::Initialize() {
   if (requested_driver.empty()) {
     requested_driver = "cocoa";
   }
+#elif REX_PLATFORM_LINUX
+  if (requested_driver.empty()) {
+    requested_driver = "wayland,x11";
+  }
 #endif
   if (!requested_driver.empty()) {
     SDL_SetHint(SDL_HINT_VIDEO_DRIVER, requested_driver.c_str());

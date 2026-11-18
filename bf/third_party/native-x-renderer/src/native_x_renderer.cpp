@@ -6,6 +6,8 @@
 
 #include <native_x_renderer/hooks.h>
 #include <native_x_renderer/native_x_renderer.h>
+#include <array>
+#include <algorithm>
 #include <vector>
 #include <mutex>
 #include <cmath>
@@ -163,16 +165,23 @@ struct HudMarker {
   float x, y;
   std::chrono::steady_clock::time_point at;
 };
+constexpr int kMarkerCell = 64, kMarkerColumns = (1280 + kMarkerCell - 1) / kMarkerCell,
+              kMarkerRows = (720 + kMarkerCell - 1) / kMarkerCell;
 std::mutex g_hud_markers_mutex;
-std::vector<HudMarker> g_hud_markers;
+std::array<std::vector<HudMarker>, kMarkerColumns * kMarkerRows> g_hud_markers;
+int MarkerColumn(double x) { return std::clamp(int(std::floor(x / kMarkerCell)), 0, kMarkerColumns - 1); }
+int MarkerRow(double y) { return std::clamp(int(std::floor(y / kMarkerCell)), 0, kMarkerRows - 1); }
 }  // namespace
 
 void NoteHudMarker(float x, float y) {
   if (!std::isfinite(x) || !std::isfinite(y)) return;
   const auto now = std::chrono::steady_clock::now();
   std::lock_guard lock(g_hud_markers_mutex);
-  std::erase_if(g_hud_markers, [&](const HudMarker& m) { return now - m.at > std::chrono::milliseconds(200); });
-  if (g_hud_markers.size() < 1024) g_hud_markers.push_back({x, y, now});
+  std::vector<HudMarker>& cell = g_hud_markers[MarkerRow(y) * kMarkerColumns + MarkerColumn(x)];
+  std::erase_if(cell, [&](const HudMarker& m) {
+    return now - m.at > std::chrono::milliseconds(200) || (m.x == x && m.y == y);
+  });
+  if (cell.size() < 1024) cell.push_back({x, y, now});
 }
 
 namespace {
@@ -214,16 +223,19 @@ bool GameMenuRecently() {
 
 bool NearHudMarker(double x, double y, double radius, double* marker_x) {
   std::lock_guard lock(g_hud_markers_mutex);
-  if (g_hud_markers.empty()) return false;
   const auto now = std::chrono::steady_clock::now();
   double best = radius * radius;
   bool found = false;
-  for (const HudMarker& m : g_hud_markers) {
-    if (now - m.at > std::chrono::milliseconds(200)) continue;
-    const double dx = m.x - x, dy = m.y - y;
-    if (dx * dx + dy * dy > best) continue;
-    best = dx * dx + dy * dy, found = true;
-    if (marker_x) *marker_x = m.x;
+  for (int row = MarkerRow(y - radius); row <= MarkerRow(y + radius); ++row) {
+    for (int column = MarkerColumn(x - radius); column <= MarkerColumn(x + radius); ++column) {
+      for (const HudMarker& m : g_hud_markers[row * kMarkerColumns + column]) {
+        if (now - m.at > std::chrono::milliseconds(200)) continue;
+        const double dx = m.x - x, dy = m.y - y;
+        if (dx * dx + dy * dy > best) continue;
+        best = dx * dx + dy * dy, found = true;
+        if (marker_x) *marker_x = m.x;
+      }
+    }
   }
   return found;
 }
@@ -313,10 +325,13 @@ void Leave(Call call, PPCContext& ctx, uint8_t* base) {
   }
   if (g_tracker && t_tracked && (internal::Info(call).flags & internal::kReplay) && !nested) {
     // A recorded command buffer run: each recorded draw goes on as a draw of its own, in order, then the call.
-    const TrackedCall* tracked = g_tracker->LeaveReplay(call, base, nested, [&](const TrackedCall& draw) {
-      if (g_observer) observer::OnLeave(draw, *g_tracker);
-      if (g_renderer) renderer::OnLeave(draw, *g_tracker, ctx, base);
-    });
+    const TrackedCall* tracked =
+        g_renderer && !g_observer && renderer::DispatchReplay(call, *g_tracker, base)
+            ? nullptr
+            : g_tracker->LeaveReplay(call, base, nested, [&](const TrackedCall& draw) {
+                if (g_observer) observer::OnLeave(draw, *g_tracker);
+                if (g_renderer) renderer::OnLeave(draw, *g_tracker, ctx, base);
+              });
     if (tracked) {
       if (g_observer) observer::OnLeave(*tracked, *g_tracker);
       if (g_renderer) renderer::OnLeave(*tracked, *g_tracker, ctx, base);

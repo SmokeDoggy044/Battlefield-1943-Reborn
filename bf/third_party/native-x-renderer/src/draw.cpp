@@ -164,17 +164,26 @@ RefCntAutoPtr<IBuffer> CreateConstantBuffer(IRenderDevice* device, const char* n
 }
 
 // A dynamic buffer's new contents (new memory each time), written until the end of the scope and recorded then.
+void Upload(IDeviceContext* context, IBuffer* buffer, uint64_t size, const uint8_t* data) {
+  void* mapped = nullptr;
+  context->MapBuffer(buffer, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
+  if (!mapped) return;
+  std::memcpy(mapped, data, size);
+  context->UnmapBuffer(buffer, MAP_WRITE);
+}
+
 class MappedBuffer {
  public:
-  MappedBuffer(Recorder& recorder, IBuffer* buffer)
-      : recorder_(recorder), buffer_(buffer), size_(buffer->GetDesc().Size), data_(recorder.Bytes(size_)) {}
+  MappedBuffer(Recorder& recorder, IBuffer* buffer, BufferUploads* pending = nullptr)
+      : recorder_(recorder), buffer_(buffer), size_(buffer->GetDesc().Size), data_(recorder.Bytes(size_)),
+        pending_(pending) {}
   ~MappedBuffer() {
+    if (pending_) {
+      pending_->list[pending_->count++] = {buffer_, size_, data_};
+      return;
+    }
     recorder_.Do([buffer = buffer_, size = size_, data = data_](IDeviceContext* context) {
-      void* mapped = nullptr;
-      context->MapBuffer(buffer, MAP_WRITE, MAP_FLAG_DISCARD, mapped);
-      if (!mapped) return;
-      std::memcpy(mapped, data, size);
-      context->UnmapBuffer(buffer, MAP_WRITE);
+      Upload(context, buffer, size, data);
     });
   }
   uint8_t* data() const { return data_; }
@@ -184,6 +193,7 @@ class MappedBuffer {
   IBuffer* buffer_;
   uint64_t size_;
   uint8_t* data_;
+  BufferUploads* pending_;
 };
 
 // The motion pixel shader (D48): the two positions the motion vertex shader writes, in clip space, to host
@@ -1469,8 +1479,9 @@ bool DrawPath::DrawInternal(const StateTracker::Program& vertex_program, const S
   DrawContext draw{&regs, &primitives, &viewport_info, polygonal, used_texture_mask, alpha_to_coverage_blended,
                    state.depth_enable && state.depth_write};
   FillSystemConstants(draw);
+  uploads_.count = 0;
   {
-    MappedBuffer map(recorder, system_constants_buffer_);
+    MappedBuffer map(recorder, system_constants_buffer_, &uploads_);
     std::memcpy(map.data(), &system_constants_, sizeof(system_constants_));
   }
   const rg::SpirvShader* stage_shaders[2] = {vertex_shader, pixel_shader};
@@ -1480,7 +1491,7 @@ bool DrawPath::DrawInternal(const StateTracker::Program& vertex_program, const S
   for (uint32_t stage = 0; stage < 2; ++stage) {
     const rg::SpirvShader* shader = stage_shaders[stage];
     if (!shader || !shader->constant_register_map().float_count) continue;
-    MappedBuffer map(recorder, pipeline->float_constants[stage]);
+    MappedBuffer map(recorder, pipeline->float_constants[stage], &uploads_);
     uint8_t* out = map.data();
     const rg::Shader::ConstantRegisterMap& constants = shader->constant_register_map();
     uint32_t first = stage ? rg::XE_GPU_REG_SHADER_CONSTANT_256_X : rg::XE_GPU_REG_SHADER_CONSTANT_000_X;
@@ -1643,13 +1654,13 @@ bool DrawPath::DrawInternal(const StateTracker::Program& vertex_program, const S
   uint64_t frame = device_->frames_presented();
   const auto* bool_loop = reinterpret_cast<const uint8_t*>(&regs[rg::XE_GPU_REG_SHADER_CONSTANT_BOOL_000_031]);
   if (uploaded_frame_ != frame || std::memcmp(uploaded_bool_loop_.data(), bool_loop, kBoolLoopConstantsSize)) {
-    MappedBuffer map(recorder, bool_loop_constants_buffer_);
+    MappedBuffer map(recorder, bool_loop_constants_buffer_, &uploads_);
     std::memcpy(map.data(), bool_loop, kBoolLoopConstantsSize);
     std::memcpy(uploaded_bool_loop_.data(), bool_loop, kBoolLoopConstantsSize);
     uploaded_frame_ = frame;
   }
   {
-    MappedBuffer map(recorder, fetch_constants_buffer_);
+    MappedBuffer map(recorder, fetch_constants_buffer_, &uploads_);
     std::memcpy(map.data(), &regs[rg::XE_GPU_REG_SHADER_CONSTANT_FETCH_00_0], kFetchConstantsSize);
     // 13 Nov 2026 ("set a clamp on texture bias with Anisotropic Filtering enabled"): with anisotropic filtering
     // forced (anisotropic_override 2x and up), a texture's own negative LOD bias (its fetch constant's word 4, bits
@@ -1808,6 +1819,7 @@ bool DrawPath::DrawInternal(const StateTracker::Program& vertex_program, const S
     set = pipelines_->FindSet(*pipeline, binding_objects_, device_->frames_presented(), &created);
     if (!set) {
       ++stats_.failed;
+      uploaded_frame_ = UINT64_MAX;
       return false;
     }
     if (created) ++stats_.binding_sets_created;
@@ -1826,7 +1838,10 @@ bool DrawPath::DrawInternal(const StateTracker::Program& vertex_program, const S
     viewport_valid_ = false;  // DiligentCore sets the viewport to the targets' size (D81)
     committed_ = nullptr;     // and the shader resources are committed again, transitioning what was a target (D82)
   }
-  recorder.Do([pso = pipeline->pso.RawPtr()](IDeviceContext* context) { context->SetPipelineState(pso); });
+  recorder.Do([pso = pipeline->pso.RawPtr(), uploads = uploads_](IDeviceContext* context) {
+    for (uint32_t i = 0; i < uploads.count; ++i) Upload(context, uploads.list[i].buffer, uploads.list[i].size, uploads.list[i].data);
+    context->SetPipelineState(pso);
+  });
   // The shader resources are committed when something changed since the last draw committed them (D82): another
   // pipeline, a texture or sampler, the render targets, or a texture no longer readable (loaded, copied or drawn
   // into since). DiligentCore allocates and writes a descriptor set for the textures and samplers on every
@@ -2047,10 +2062,6 @@ bool DrawPath::DrawInternal(const StateTracker::Program& vertex_program, const S
   viewport_valid_ = true;
   const float blend_factors[4] = {regs.Get<float>(rg::XE_GPU_REG_RB_BLEND_RED), regs.Get<float>(rg::XE_GPU_REG_RB_BLEND_GREEN),
                                   regs.Get<float>(rg::XE_GPU_REG_RB_BLEND_BLUE), regs.Get<float>(rg::XE_GPU_REG_RB_BLEND_ALPHA)};
-  recorder.Do([blend_factors, stencil = state.stencil_enable, stencil_reference](IDeviceContext* context) {
-    if (stencil) context->SetStencilRef(stencil_reference);
-    context->SetBlendFactors(blend_factors);
-  });
   // D169 research (NXR_SKY_PROBE=1, tests): each new shader pair drawn at the output's size, once, with its vertex
   // constants c12 to c15 (where the terrain's world-view-projection is), to find the sky dome's camera.
   if (output_sized && pixel_shader && render_target_count) {
@@ -2147,7 +2158,10 @@ bool DrawPath::DrawInternal(const StateTracker::Program& vertex_program, const S
       return false;
   }
   recorder.Do([index_buffer, index_offset, index_type, count = primitives.host_draw_vertex_count, oversize,
-               stretched_viewport, stretched_scissor, viewport, scissor_rect](IDeviceContext* context) {
+               stretched_viewport, stretched_scissor, viewport, scissor_rect, blend_factors,
+               stencil = state.stencil_enable, stencil_reference](IDeviceContext* context) {
+    if (stencil) context->SetStencilRef(stencil_reference);
+    context->SetBlendFactors(blend_factors);
     if (index_buffer) context->SetIndexBuffer(index_buffer, index_offset, RESOURCE_STATE_TRANSITION_MODE_TRANSITION);
     auto issue = [&] {
       if (index_buffer) {

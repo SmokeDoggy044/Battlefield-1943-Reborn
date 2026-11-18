@@ -43,8 +43,8 @@ REXCVAR_DEFINE_INT32(monitor, 0, "UI/Window",
     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
 
 REXCVAR_DEFINE_STRING(video_driver, "", "UI/Window",
-                      "SDL video driver to use, such as \"wayland\" or \"x11\". Empty picks "
-                      "SDL's default for the session")
+                      "SDL video driver to use, such as \"wayland\" or \"x11\". Empty tries "
+                      "Wayland then X11 on Linux, SDL's default elsewhere")
     .lifecycle(rex::cvar::Lifecycle::kRequiresRestart);
 
 REXCVAR_DEFINE_INT32(video_mode_width, 1280, "Display", "Guest video mode width in pixels")

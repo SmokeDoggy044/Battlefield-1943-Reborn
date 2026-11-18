@@ -50,9 +50,10 @@ class GuestTextures final : public rex::graphics::TextureCache {
   // fetch constants whose contents differ from what this cache last saw are marked written (D83), as the SDK's
   // command processors mark those the guest writes, and only their bindings are computed again.
   void RequestTextures(uint32_t used_texture_mask) override;
-  // Changes whenever a binding was computed again or reset, or a frame began (D83): what GetView,
-  // GetActiveTextureHostSwizzle and GetActiveTextureSwizzledSigns return may have changed.
+  // Changes whenever a frame began (D83), and per fetch constant whenever its binding was computed again or reset:
+  // what GetView, GetActiveTextureHostSwizzle and GetActiveTextureSwizzledSigns return may have changed.
   uint64_t generation() const { return generation_; }
+  uint64_t generation(uint32_t fetch_constant) const { return generation_ + bindings_changed_[fetch_constant]; }
 
   // The view a texture binding of the translated shaders samples (2D array, 3D or cube), or nullptr when
   // the fetch constant has no loadable texture, or (`other_dimension` set) has a texture of another
@@ -131,6 +132,7 @@ class GuestTextures final : public rex::graphics::TextureCache {
   std::array<std::array<uint32_t, 6>, 32> seen_{};
   uint32_t seen_mask_ = 0;
   uint64_t generation_ = 1;
+  std::array<uint64_t, 32> bindings_changed_{};
   Stats stats_;
 };
 

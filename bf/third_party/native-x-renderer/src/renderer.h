@@ -53,5 +53,6 @@ void EndViewGeometry();
 void OnEnter(Call call, PPCContext& ctx, uint8_t* base, bool nested);
 void OnLeave(const TrackedCall& tracked, StateTracker& tracker, PPCContext& ctx, uint8_t* base);
 void OnFrameEnd(uint32_t frame);
+bool DispatchReplay(Call call, StateTracker& tracker, const uint8_t* base);
 
 }  // namespace native_x_renderer::renderer

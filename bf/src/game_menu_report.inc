@@ -459,7 +459,7 @@
     c.tick_rate = TickRate();
     const ImVec2 sz = ImGui::GetIO().DisplaySize;
     const bool full = settings_.Get("fullscreen", "off") == "on";
-    const int hz = ScreenRefresh();
+    const int hz = int(std::lround(ScreenRefresh()));
     c.display = fmt::format("{} x {} {}{}", int(sz.x), int(sz.y),
                             full ? (settings_.Get("fullscreen_mode", "desktop") == "desktop" ? "borderless" : "fullscreen") : "windowed",
                             hz > 0 ? fmt::format(", {} Hz", hz) : "");

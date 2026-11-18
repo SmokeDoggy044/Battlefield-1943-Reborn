@@ -16,6 +16,10 @@ namespace {
 bool LooksLikePerspective(const uint8_t* constants, bool transposed) {
   float v[16];
   std::memcpy(v, constants, sizeof(v));
+  auto at = [&](int r, int c) { return transposed ? v[c * 4 + r] : v[r * 4 + c]; };
+  const float fzw = at(2, 0) * at(3, 0) + at(2, 1) * at(3, 1) + at(2, 2) * at(3, 2);
+  const float fww = at(3, 0) * at(3, 0) + at(3, 1) * at(3, 1) + at(3, 2) * at(3, 2);
+  if (std::isfinite(fzw) && std::isfinite(fww) && !(fzw > 0.7f * fww && fzw < 1.35f * fww)) return false;
   double rows[4][3];
   for (int r = 0; r < 4; ++r) {
     for (int c = 0; c < 3; ++c) rows[r][c] = transposed ? v[c * 4 + r] : v[r * 4 + c];
