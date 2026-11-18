@@ -200,16 +200,18 @@
   }
 
   // The small band under a Reborn tab row's name (TekRantGaming, 18 Nov 2026): REBORN OFFICIAL SERVER on ours, on the
-  // black tape, TRUSTED COMMUNITY SERVER on a promoted community one (server_list.h promoted), in gold.
-  void RowBanner(ImDrawList* d, const Stage& st, ImVec2 at, const ServerInfo& sv) {
-    if (!sv.official) return;
+  // black tape, TRUSTED COMMUNITY SERVER on a promoted community one (server_list.h promoted), in gold. Also the
+  // server card's first chip. Lettering 12.5 (his ask: the chip size was still too small to read); returns its width.
+  float RowBanner(ImDrawList* d, const Stage& st, ImVec2 at, const ServerInfo& sv, float h) {
+    if (!sv.official) return 0;
     const kit::Fonts& f = kit::GetFonts();
     const char* t = sv.promoted ? "TRUSTED COMMUNITY SERVER" : "REBORN OFFICIAL SERVER";
-    const float size = st(9.75f), track = st(1.2f), h = st(16);
-    const ImVec2 b(at.x + kit::SpacedWidth(f.ui_bold, size, t, track) + st(12), at.y + h);
+    const float size = st(12.5f), track = st(1.3f);
+    const ImVec2 b(at.x + kit::SpacedWidth(f.ui_bold, size, t, track) + st(14), at.y + h);
     d->AddRectFilled(at, b, sv.promoted ? kit::kGold : kit::kStrip);
-    kit::Spaced(d, f.ui_bold, size, ImVec2(at.x + st(6), at.y + (h - size * 1.45f) * 0.5f),
+    kit::Spaced(d, f.ui_bold, size, ImVec2(at.x + st(7), at.y + (h - size * 1.45f) * 0.5f),
                 sv.promoted ? kit::kInk : kit::kStripText, t, track);
+    return b.x - at.x;
   }
 
   // Four bars at `at` (left, middle): green under 60 ms, amber under 120, red above; not measured: all faint.
@@ -407,7 +409,7 @@
     // ---- the table
     // A list with Reborn tab servers in it has taller rows: room for the band under their names (RowBanner).
     const bool banners = std::any_of(servers.begin(), servers.end(), [](const ServerInfo& s) { return s.official; });
-    const float head = st(30), rh = banners ? st(42) : st(36);
+    const float head = st(30), rh = banners ? st(48) : st(36);
     kit::PaperArt(d, ta, tb);
     // (The region with its flag and the tick rate: TekRantGaming, 13 Nov 2026.)
     const float colx[6] = {st(14), st(296), st(432), st(566), st(676), st(736)};
@@ -471,9 +473,9 @@
           iw += hw + st(8);
         }
         // A Reborn tab server (ours, or a promoted community one: plasma.py Promoted) has its band under the name.
-        const float name_y = sv.official ? y + st(5) : y + (rh - cap) * 0.5f;
+        const float name_y = sv.official ? y + st(5.5f) : y + (rh - cap) * 0.5f;
         float nw = iw + kit::GameText(d, kit::GameFont::kText, cap, ImVec2(ta.x + colx[0] + iw, name_y), ink, sv.name);
-        RowBanner(d, st, ImVec2(ta.x + colx[0] + iw, y + st(20.5f)), sv);
+        RowBanner(d, st, ImVec2(ta.x + colx[0] + iw, y + st(21.5f)), sv, st(20));
         if (sv.night && kNightOps)
           Chip(d, st, ImVec2(ta.x + colx[0] + nw + st(12), y + (rh - st(16)) * 0.5f), st(16), "NIGHT", IM_COL32(40, 46, 88, 255),
                kit::kStripText, false);
@@ -575,15 +577,16 @@
       const ImVec2 j0(pa.x + st(18), pb.y - st(18) - st(40)), j1(pb.x - st(18) - st(40) - st(8), pb.y - st(18));
       d->PushClipRect(pa, ImVec2(pb.x, j0.y - st(10)), true);
       float x = pa.x + st(18), y = p1.y + st(16);
-      if (sv->promoted)  // a community server shown with ours (Promoted, plasma.py): its own mark, gold
-        x += Chip(d, st, ImVec2(x, y), st(18), "TRUSTED COMMUNITY SERVER", kit::kGold, kit::kInk, false) + st(6);
+      // Ours and a promoted community one (Promoted, plasma.py): the row's band, as large; the others chips beside it.
+      const float kh = sv->official ? st(22) : st(18), cy = y + (kh - st(18)) * 0.5f;
+      if (sv->official)
+        x += RowBanner(d, st, ImVec2(x, y), *sv, kh) + st(6);
       else
-        x += Chip(d, st, ImVec2(x, y), st(18), sv->official ? "REBORN OFFICIAL SERVER" : "COMMUNITY", kit::kStrip,
-                  kit::kStripText, false) + st(6);
+        x += Chip(d, st, ImVec2(x, y), st(18), "COMMUNITY", kit::kStrip, kit::kStripText, false) + st(6);
       if (sv->night && kNightOps)
-        x += Chip(d, st, ImVec2(x, y), st(18), "NIGHT OPS", IM_COL32(40, 46, 88, 255), kit::kStripText, false) + st(6);
-      if (fav) Chip(d, st, ImVec2(x, y), st(18), "FAVOURITE", kit::kGold, kit::kInk, false);
-      y += st(18) + st(14);
+        x += Chip(d, st, ImVec2(x, cy), st(18), "NIGHT OPS", IM_COL32(40, 46, 88, 255), kit::kStripText, false) + st(6);
+      if (fav) Chip(d, st, ImVec2(x, cy), st(18), "FAVOURITE", kit::kGold, kit::kInk, false);
+      y += kh + st(14);
       kit::GameText(d, kit::GameFont::kText, st(13), ImVec2(pa.x + st(18), y), kit::kInk, sv->name);
       y += st(13) + st(10);
       std::string line = fmt::format("{} / {} PLAYERS", sv->players, sv->max_players);
