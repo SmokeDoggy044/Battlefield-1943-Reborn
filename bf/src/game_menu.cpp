@@ -621,6 +621,8 @@ fs::path BrowseForFolder(void* owner) {
   }
   return out;
 }
+// HD textures benched (v0.4.7.4): Settings > Graphics shows no HD rows; the code stays for when they come back.
+constexpr bool kHdTexturesShown = false;
 // The HD texture pack's file (Settings > Graphics > Import HD texture pack).
 fs::path BrowseForHdPack(void* owner) {
   wchar_t file[MAX_PATH] = L"";
@@ -3910,7 +3912,9 @@ class GameMenu final : public rex::ui::ImGuiDialog {
     // Grass and shrubs (NativeXRenderer grass.cpp) are always on (TekRantGaming, 10 Nov 2026): no row turns them off, only
     // their distance below is the player's (the F8 panel still switches them, for testing).
     // HD textures (TekRantGaming, 9 Nov 2026: an HD texture pack, imported in the launcher, toggled here; NativeXRenderer D149).
-    {
+    // Benched since v0.4.7.4 (TekRantGaming, 18 Nov 2026: "Remove the HD textures options in the game settings ... we're
+    // benching it for a while"): the two rows are not shown and no pack is given to the renderer (bf1943_app.h).
+    if (kHdTexturesShown) {
       const fs::path pack = HdPackPath(UserDir());
       std::error_code ec;
       const bool have = fs::exists(pack, ec);
