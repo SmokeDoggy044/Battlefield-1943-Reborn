@@ -109,6 +109,7 @@ bool XmaContext::Work() {
   }
 
   memory::RingBuffer output_rb = PrepareOutputRingBuffer(&data);
+  const int32_t room_before = remaining_subframe_blocks_in_output_buffer_;
 
   // Consume-only context: no input, just drain remaining subframes.
   if (data.IsConsumeOnlyContext()) {
@@ -143,7 +144,11 @@ bool XmaContext::Work() {
 
   data.output_buffer_write_offset = output_rb.write_offset() / kOutputBytesPerBlock;
 
-  if (output_rb.empty()) {
+  // Write offset == read offset means full only when this pass wrote: the hardware clears the valid bit when the
+  // decoder fills the buffer. A pass that wrote nothing (no input yet, right after XMAInitializeContext and
+  // XMASetOutputBufferValid) leaves an empty buffer valid; clearing it there makes the guest read the whole empty
+  // buffer as decoded audio (EA's XMA decoder in BF1943: ~60 ms of silence at the start of every stream).
+  if (output_rb.empty() && remaining_subframe_blocks_in_output_buffer_ != room_before) {
     data.output_buffer_valid = 0;
   }
 
