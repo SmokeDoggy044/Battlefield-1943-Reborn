@@ -26,6 +26,10 @@
 #endif  // REX_PLATFORM_MAC
 
 #if REX_PLATFORM_LINUX
+#include <atomic>
+#include <cstdint>
+#include <cstdlib>
+
 #include <linux/fs.h>
 #include <sys/ioctl.h>
 #endif
@@ -175,27 +179,106 @@ static bool ParseProcMapsLine(const std::string& line, LinuxMapEntry& out) {
   return out.start < out.end;
 }
 
+// PROCMAP_QUERY (Linux 6.11+): one ioctl on /proc/self/maps answers "which mapping holds this address" instead of
+// reading and parsing the whole file, which for the guest's arena is thousands of lines on every look up.
+//
+// Battlefield 1943 Reborn, 17 Nov 2026: the ioctl's number and struct are the kernel's fixed UAPI, so they are
+// written here rather than taken from <linux/fs.h>. With the header's `#ifdef PROCMAP_QUERY` the fast path was
+// compiled out of every release build: they are made in an Ubuntu 22.04 root (kernel headers 5.15, for glibc 2.35)
+// and Ubuntu 24.04's headers (6.8) lack it as well. Kernels older than 6.11 answer ENOTTY; the first such answer
+// switches to reading the file for the rest of the run. REX_PROCMAP_QUERY=0 forces the file path (for tests).
+struct RexProcmapQuery {
+  uint64_t size;
+  uint64_t query_flags;
+  uint64_t query_addr;
+  uint64_t vma_start;
+  uint64_t vma_end;
+  uint64_t vma_flags;
+  uint64_t vma_page_size;
+  uint64_t vma_offset;
+  uint64_t inode;
+  uint32_t dev_major;
+  uint32_t dev_minor;
+  uint32_t vma_name_size;
+  uint32_t build_id_size;
+  uint64_t vma_name_addr;
+  uint64_t build_id_addr;
+};
+static_assert(sizeof(RexProcmapQuery) == 104, "struct procmap_query is 104 bytes in Linux 6.11");
+// _IOWR('f', 17, struct procmap_query)
+constexpr unsigned long kRexProcmapQuery =
+    (3ul << 30) | (sizeof(RexProcmapQuery) << 16) | (static_cast<unsigned long>('f') << 8) | 17ul;
+static_assert(kRexProcmapQuery == 0xC0686611ul, "PROCMAP_QUERY's ioctl number");
+constexpr uint64_t kRexProcmapVmaReadable = 0x01;
+constexpr uint64_t kRexProcmapVmaWritable = 0x02;
+constexpr uint64_t kRexProcmapVmaExecutable = 0x04;
+constexpr uint64_t kRexProcmapVmaShared = 0x08;
+#ifdef PROCMAP_QUERY
+// Headers that have it must agree with the copy above.
+static_assert(sizeof(struct procmap_query) == sizeof(RexProcmapQuery), "procmap_query size");
+static_assert(PROCMAP_QUERY == kRexProcmapQuery, "PROCMAP_QUERY number");
+static_assert(PROCMAP_QUERY_VMA_READABLE == kRexProcmapVmaReadable &&
+                  PROCMAP_QUERY_VMA_WRITABLE == kRexProcmapVmaWritable &&
+                  PROCMAP_QUERY_VMA_EXECUTABLE == kRexProcmapVmaExecutable &&
+                  PROCMAP_QUERY_VMA_SHARED == kRexProcmapVmaShared,
+              "PROCMAP_QUERY flags");
+#endif
+
+// 1: the ioctl is used; 0: not tried yet; -1: off (kernel older than 6.11, or REX_PROCMAP_QUERY=0).
+static std::atomic<int> procmap_query_state{0};
+static std::atomic<int> procmap_query_errno{0};
+
+static bool ProcmapQueryDisabledByEnvironment() {
+  const char* value = std::getenv("REX_PROCMAP_QUERY");
+  return value && value[0] == '0';
+}
+
+// One descriptor per thread, as pull request 28 had it: a plain int opened with open() only. This runs inside the
+// write watch fault handler (a signal handler), so it must stay async signal safe: a thread_local with a destructor
+// registers it through __cxa_thread_atexit, which takes the dynamic loader's lock and allocates, and a game hung
+// that way on the Ally (17 Nov 2026). The descriptor of a thread that ends stays open (one per thread that ever
+// asked; the guest's threads live for the whole run).
+static thread_local int maps_fd = -2;  // -2: not opened yet; -1: open failed
+
+// 1: answered (out_entry filled); 0: no mapping holds the address; -1: not answered, read the file.
+static int ProcmapQueryLookup(uintptr_t addr, LinuxMapEntry& out_entry) {
+  int state = procmap_query_state.load(std::memory_order_relaxed);
+  if (state < 0) return -1;
+  if (state == 0 && ProcmapQueryDisabledByEnvironment()) {
+    procmap_query_state.store(-1, std::memory_order_relaxed);
+    return -1;
+  }
+  if (maps_fd == -2) maps_fd = open("/proc/self/maps", O_RDONLY | O_CLOEXEC);
+  if (maps_fd < 0) return -1;
+  RexProcmapQuery query{};
+  query.size = sizeof(query);
+  query.query_addr = addr;
+  if (ioctl(maps_fd, kRexProcmapQuery, &query) == 0) {
+    if (state == 0) procmap_query_state.store(1, std::memory_order_relaxed);
+    out_entry.start = static_cast<uintptr_t>(query.vma_start);
+    out_entry.end = static_cast<uintptr_t>(query.vma_end);
+    out_entry.perms[0] = query.vma_flags & kRexProcmapVmaReadable ? 'r' : '-';
+    out_entry.perms[1] = query.vma_flags & kRexProcmapVmaWritable ? 'w' : '-';
+    out_entry.perms[2] = query.vma_flags & kRexProcmapVmaExecutable ? 'x' : '-';
+    out_entry.perms[3] = query.vma_flags & kRexProcmapVmaShared ? 's' : 'p';
+    out_entry.perms[4] = '\0';
+    return 1;
+  }
+  const int error = errno;
+  if (error == ENOENT) return 0;
+  if (error == ENOTTY || error == EINVAL || error == EOPNOTSUPP) {
+    // The kernel has no PROCMAP_QUERY: do not ask again.
+    procmap_query_errno.store(error, std::memory_order_relaxed);
+    procmap_query_state.store(-1, std::memory_order_relaxed);
+  }
+  return -1;
+}
+
 // Find the mapping entry in /proc/self/maps that contains the given address
 static bool FindEntryForAddress(void* address, LinuxMapEntry& out_entry) {
   const uintptr_t addr = reinterpret_cast<uintptr_t>(address);
-#ifdef PROCMAP_QUERY
-  static thread_local int maps_fd = open("/proc/self/maps", O_RDONLY | O_CLOEXEC);
-  if (maps_fd >= 0) {
-    procmap_query query{};
-    query.size = sizeof(query);
-    query.query_addr = addr;
-    if (ioctl(maps_fd, PROCMAP_QUERY, &query) == 0) {
-      out_entry.start = static_cast<uintptr_t>(query.vma_start);
-      out_entry.end = static_cast<uintptr_t>(query.vma_end);
-      out_entry.perms[0] = query.vma_flags & PROCMAP_QUERY_VMA_READABLE ? 'r' : '-';
-      out_entry.perms[1] = query.vma_flags & PROCMAP_QUERY_VMA_WRITABLE ? 'w' : '-';
-      out_entry.perms[2] = query.vma_flags & PROCMAP_QUERY_VMA_EXECUTABLE ? 'x' : '-';
-      out_entry.perms[3] = query.vma_flags & PROCMAP_QUERY_VMA_SHARED ? 's' : 'p';
-      return true;
-    }
-    if (errno == ENOENT) return false;
-  }
-#endif
+  const int answered = ProcmapQueryLookup(addr, out_entry);
+  if (answered >= 0) return answered == 1;
   std::ifstream maps("/proc/self/maps");
   if (!maps.is_open())
     return false;
@@ -245,6 +328,23 @@ static PageAccess PermsToPageAccess(const char perms[5]) {
 }
 
 }  // namespace
+
+// Called once at start (Memory::Initialize): tries PROCMAP_QUERY on a mapping that surely exists and logs which way
+// page protection is read for this run, so a log shows whether the fast path is in use.
+void LogHostPageQueryPath() {
+  static int probe_target = 0;
+  LinuxMapEntry entry;
+  const int answered = ProcmapQueryLookup(reinterpret_cast<uintptr_t>(&probe_target), entry);
+  if (answered == 1) {
+    REXSYS_INFO("Page queries: PROCMAP_QUERY (Linux 6.11+), one ioctl per look up");
+  } else if (ProcmapQueryDisabledByEnvironment()) {
+    REXSYS_INFO("Page queries: reading /proc/self/maps (REX_PROCMAP_QUERY=0)");
+  } else {
+    const int error = procmap_query_errno.load(std::memory_order_relaxed);
+    REXSYS_INFO("Page queries: reading /proc/self/maps (no PROCMAP_QUERY on this kernel: {})",
+                error ? strerror(error) : "probe failed");
+  }
+}
 #endif  // REX_PLATFORM_LINUX
 
 void* AllocFixed(void* base_address, size_t length, AllocationType allocation_type,

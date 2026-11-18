@@ -20,6 +20,7 @@
 
 #include "clan_tags.h"
 #include "comms.h"
+#include "voice_mute.h"
 #include "paste_keys.h"
 
 REXCVAR_DEFINE_STRING(keybind_chat_all, "T", "Input/Keybinds/Chat", "Text chat to everyone on the server");
@@ -138,6 +139,7 @@ class CommsOverlay final : public rex::ui::ImGuiDialog {
       comms::SetPushToTalk(false);
       return;
     }
+    mute::DrawOverGame(io);  // the speakers over the game's own scoreboards (voice_mute.h)
     const bool typing = comms::Typing();
     comms::SetPushToTalk(!typing && REXCVAR_GET(bf_voice_mode) == "push" && BindDown(REXCVAR_GET(keybind_push_to_talk)));
     if (!typing && REXCVAR_GET(bf_text_chat)) {

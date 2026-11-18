@@ -35,6 +35,7 @@
 
 #include "capture_points.h"
 #include "clan_tags.h"
+#include "voice_mute.h"
 #include "comms.h"
 #include "flash_spawn.h"
 
@@ -652,6 +653,10 @@ REX_HOOK_RAW(sub_826B6628) {
     if (!noisy.count(name) && lines.fetch_add(1) < 3000)
       REXLOG_INFO("BF menu command {} ({}) lr {:08X}", name, args, uint32_t(ctx.lr));
   }
+  // The scoreboards' Y (the console's gamer card, which the PC never had): mute or unmute that player (voice_mute.h).
+  if (ctx.r3.u32 && std::strcmp(reinterpret_cast<const char*>(base + ctx.r3.u32), "showGamerCard") == 0 &&
+      bf1943::mute::TakeGamerCard(ctx.r4.u32 ? reinterpret_cast<const char*>(base + ctx.r4.u32) : nullptr))
+    return;
   if (bf1943::SpawnMouseCommand(ctx.r3.u32 ? reinterpret_cast<const char*>(base + ctx.r3.u32) : nullptr,
                                 ctx.r4.u32 ? reinterpret_cast<const char*>(base + ctx.r4.u32) : nullptr))
     return;

@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.7.3 (17 November 2026): a hotfix
+
+- **Mute any player's voice** from the scoreboard or the end of round screen: a speaker in each row lights while they
+  talk and shows a slash once muted, and your mutes are kept between games.
+- **Achievements unlock as soon as their progress is complete,** including progress made before 0.4.7.
+- **Report an issue** now keeps your graphics driver's version, and the Contact box says that the name you enter is
+  shown publicly.
+- **Linux: smoother frame times on kernel 6.11 and newer,** as the faster memory lookup from pull request 28 is now
+  really in the Linux builds. By DiXN ([pull request 28](../../pull/28)).
+
 ## 0.4.7.2 (17 November 2026): a hotfix
 
 - **Fewer server crashes.** Fixed the crashes that took official servers down mid match after 0.4.7.1, and guarded

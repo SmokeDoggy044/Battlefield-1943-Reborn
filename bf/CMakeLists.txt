@@ -78,6 +78,8 @@ set(BF1943_SOURCES
     src/comms.cpp
     src/comms_ui.cpp
     src/world_sync.cpp
+    src/voice_mute.cpp
+    src/voice_mute_icon.cpp
     src/gpu_preference.cpp
     third_party/miniz/miniz.c
     src/server_mode.cpp

@@ -2309,6 +2309,7 @@
   bool sb_ok_ = false, sb_answered_ = false;
   double sb_asked_at_ = -100;
   std::atomic<bool> sb_busy_{false};
+  int sb_row_ = 0;  // the row cursor (the voice mute)
 
   void ScoreboardPage(ImDrawList* d, ImGuiIO& io, const Input& in) {
     const ImVec2 sz = io.DisplaySize;
@@ -2353,21 +2354,60 @@
                 !answered ? "ASKING THE SERVER..." : !ok ? "THE SERVERS ARE NOT REACHABLE"
                 : fmt::format("{} {}", rows.size(), rows.size() == 1 ? "PLAYER" : "PLAYERS"), st(2));
     const std::string mine = settings_.Get("player_name", "");
+    // A row cursor and each player's voice (voice_mute.h): a speaker lit while that player is heard, struck through
+    // once muted; X (the keyboard's F), the prompt's strip or a click on the speaker mutes or unmutes the player under
+    // the cursor. The player's own row has no mute; its speaker lights while their own voice goes out.
+    const int n = int(rows.size());
+    if (n) {
+      if (in.up) sb_row_ = (sb_row_ + n - 1) % n;
+      if (in.down) sb_row_ = (sb_row_ + 1) % n;
+    }
+    sb_row_ = std::clamp(sb_row_, 0, std::max(0, n - 1));
     const float x0 = st.P(40, 0).x, x1 = st.P(1240, 0).x;
     float y = st.P(0, 176).y;
-    for (size_t i = 0; i < rows.size() && y < st.P(0, 640).y; ++i) {
-      const bool me = !mine.empty() && rows[i].name == mine;
-      d->AddRectFilled(ImVec2(x0, y), ImVec2(x1, y + st(40)), IM_COL32(15, 17, 13, me ? 236 : 200));
-      if (me) d->AddRectFilled(ImVec2(x0, y), ImVec2(x0 + st(4), y + st(40)), kit::kStamp);
-      const ImU32 ink = me ? kit::kCream : kit::kKhakiText;
+    int toggled = -1;
+    const double now = ImGui::GetTime();
+    for (int i = 0; i < n && y < st.P(0, 640).y; ++i) {
+      const LbRow& r = rows[size_t(i)];
+      const bool me = !mine.empty() && r.name == mine;
+      const bool sel = i == sb_row_;
+      const ImVec2 a(x0, y), b(x1, y + st(40));
+      const bool hover = ImGui::IsMouseHoveringRect(a, b);
+      if (hover && (io.MouseDelta.x != 0 || io.MouseDelta.y != 0)) sb_row_ = i;
+      d->AddRectFilled(a, b, IM_COL32(15, 17, 13, me || sel ? 236 : 200));
+      if (sel) d->AddRectFilled(a, ImVec2(a.x + st(4), b.y), kit::kStamp);
+      const ImU32 ink = me || sel ? kit::kCream : kit::kKhakiText;
       d->AddText(f.typed, st(15), ImVec2(x0 + st(24), y + st(11)), ink, std::to_string(i + 1).c_str());
-      clan::DrawTagged(d, f.ui_bold, st(19), ImVec2(x0 + st(90), y + st(8)), ink, rows[i].name, rows[i].tag, kit::kGold);
-      const std::string sc = std::to_string(rows[i].score);
+      // The speaker between the place and the name.
+      const ImVec2 icon(x0 + st(68), y + st(20));
+      const mute::Voice voice = me ? (comms::Transmitting() ? mute::Voice::kTalking : mute::Voice::kQuiet)
+                                   : mute::VoiceOf(r.name);
+      const bool icon_hover = !me && ImGui::IsMouseHoveringRect(ImVec2(icon.x - st(16), a.y), ImVec2(icon.x + st(16), b.y));
+      if (icon_hover) d->AddRectFilled(ImVec2(icon.x - st(15), a.y + st(5)), ImVec2(icon.x + st(15), b.y - st(5)),
+                                       IM_COL32(207, 198, 168, 40), st(3));
+      mute::DrawIcon(d, icon, st(24), voice, ink, IM_COL32(136, 208, 96, 255), kit::kStamp, now);
+      if (icon_hover && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) toggled = i;
+      clan::DrawTagged(d, f.ui_bold, st(19), ImVec2(x0 + st(98), y + st(8)), ink, r.name, r.tag, kit::kGold);
+      if (!me && voice == mute::Voice::kMuted) {
+        const float nx = x0 + st(98) + clan::TaggedWidth(f.ui_bold, st(19), r.name, r.tag) + st(14);
+        kit::Spaced(d, f.typed, st(12), ImVec2(nx, y + st(14)), kit::kStamp, "MUTED", st(2));
+      }
+      const std::string sc = std::to_string(r.score);
       d->AddText(f.typed, st(16), ImVec2(x1 - st(24) - kit::TextWidth(f.typed, st(16), sc), y + st(10)), ink, sc.c_str());
       y += st(44);
     }
+    const bool can_mute = n && !(rows[size_t(sb_row_)].name == mine && !mine.empty());
+    const bool muted_now = can_mute && comms::Muted(rows[size_t(sb_row_)].name);
     Input cue = in;
-    Prompts(d, st, st.P(40, 720 - 24 - 34), {{kit::Button::kB, "BACK"}}, cue, 15);
+    std::vector<Cue> cues;
+    if (can_mute) cues.push_back({kit::Button::kX, muted_now ? "UNMUTE" : "MUTE"});
+    cues.push_back({kit::Button::kB, "BACK"});
+    Prompts(d, st, st.P(40, 720 - 24 - 34), cues, cue, 15);
+    if (can_mute && (in.x || cue.x)) toggled = sb_row_;
+    if (toggled >= 0 && toggled < n && !(rows[size_t(toggled)].name == mine && !mine.empty())) {
+      const bool m = comms::ToggleMuted(rows[size_t(toggled)].name);
+      REXLOG_INFO("BF scoreboard: {} {} from the pause's Scoreboard", rows[size_t(toggled)].name, m ? "muted" : "unmuted");
+    }
     if (in.back || cue.back) page_ = Page::kPause, pause_row_ = kPauseScoreboard;  // the strip's click too (issue 19)
   }
   // ---- Create Private Match, ours (in place of the game's console hosted match, docs/MENUS-PLAN.md section 7): our own

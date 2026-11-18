@@ -81,6 +81,12 @@ uint32_t get_page_count(uint32_t value, uint32_t page_size, uint32_t page_size_s
 
 static memory::Memory* active_memory_ = nullptr;
 
+#if REX_PLATFORM_LINUX
+// memory_posix.cpp: logs whether page protection is read with PROCMAP_QUERY or from /proc/self/maps. Declared here
+// rather than in rex/memory/utils.h, which most of the SDK and the game include.
+void LogHostPageQueryPath();
+#endif
+
 void CrashDump() {
   static std::atomic<int> in_crash_dump(0);
   if (in_crash_dump.fetch_add(1)) {
@@ -180,6 +186,9 @@ bool Memory::Initialize() {
   REXSYS_INFO("Guest memory arena mapped: virtual base 0x{:016X}, physical base 0x{:016X}",
               reinterpret_cast<uintptr_t>(virtual_membase_),
               reinterpret_cast<uintptr_t>(physical_membase_));
+#if REX_PLATFORM_LINUX
+  LogHostPageQueryPath();
+#endif
 
   // Prepare virtual heaps.
   heaps_.v00000000.Initialize(this, virtual_membase_, memory::HeapType::kGuestVirtual, 0x00000000,
