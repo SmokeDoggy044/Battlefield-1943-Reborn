@@ -4,7 +4,7 @@
 
 **Known issues, please read**
 - **Invisible players or black textures.** We are aware that some players can become invisible, or some textures can
-  turn black. This has been investigated and worked on. If it happens to you, go to Settings, Graphics and choose
+  turn black. This is being investigated. If it happens to you, go to Settings, Graphics and choose
   **Rebuild shaders**: your shaders are built again the next time the game starts, and this should fix it. If it does
   not, please be patient for the next hotfix.
 - **Can't load into a server?** Third party overlays such as RivaTuner, Overwolf and others can stop the game joining.
