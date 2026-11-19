@@ -78,6 +78,7 @@ set(BF1943_SOURCES
     src/perf_overlay.cpp
     src/audio_settings.cpp
     src/ea_mixer_ready.cpp
+    src/ea_xma_kicks.cpp
     src/auto_join.cpp
     src/comms.cpp
     src/comms_ui.cpp
