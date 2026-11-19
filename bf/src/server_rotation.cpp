@@ -526,6 +526,49 @@ void DevMoveSpawns(uint8_t* base) {
                 std::chrono::duration<double>(now - first).count(), where);
 }
 
+// BF_DEV_FIND_SPAWNS=<x>,<z>,<r> (tests, a dedicated server): once, 10 s after the first tick, every three floats in
+// memory whose x and z lie within r of (x, z) and whose y lies between 150 and 300, logged with their exact values (up
+// to 80): the spawn points of a base, for BF_DEV_MOVE_SPAWNS (Japan's carrier on Wake Island). Only reads.
+void DevFindSpawns(uint8_t* base) {
+  static float want[3] = {};
+  static const bool on = [] {
+    const char* v = std::getenv("BF_DEV_FIND_SPAWNS");
+    return v && std::sscanf(v, "%f,%f,%f", &want[0], &want[1], &want[2]) == 3;
+  }();
+  static Clock::time_point first{};
+  static bool done = false;
+  if (!on || done) return;
+  const auto now = Clock::now();
+  if (first == Clock::time_point{}) first = now;
+  if (now - first < std::chrono::seconds(10)) return;
+  done = true;
+#if defined(_WIN32)
+  auto fl = [](const uint8_t* m) {
+    const uint32_t w = uint32_t(m[0]) << 24 | uint32_t(m[1]) << 16 | uint32_t(m[2]) << 8 | m[3];
+    float f;
+    std::memcpy(&f, &w, 4);
+    return f;
+  };
+  int found = 0;
+  for (uint64_t a = 0x00100000; a < 0x100000000ull && found < 80;) {
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (!VirtualQuery(base + a, &mbi, sizeof(mbi))) break;
+    const uint64_t start = uint64_t(static_cast<const uint8_t*>(mbi.BaseAddress) - base);
+    const uint64_t end = start + mbi.RegionSize;
+    const bool readable = mbi.State == MEM_COMMIT && !(mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD));
+    if (readable && start >= 0x00100000ull && start < 0xA0000000ull)
+      for (uint64_t p = (std::max<uint64_t>(start, 0x00100000ull) + 3) & ~3ull; p + 12 <= end && found < 80; p += 4) {
+        const float x = fl(base + p), y = fl(base + p + 4), z = fl(base + p + 8);
+        if (!(std::fabs(x - want[0]) < want[2] && std::fabs(z - want[1]) < want[2] && y > 150.0f && y < 300.0f)) continue;
+        REXLOG_INFO("BF dev find spawns: {:08X}: {:.17g},{:.17g},{:.17g}", uint32_t(p), x, y, z);
+        ++found;
+      }
+    a = end;
+  }
+  REXLOG_INFO("BF dev find spawns: {} near {} {} (within {} m)", found, want[0], want[1], want[2]);
+#endif
+}
+
 // BF_DEV_TICKETS=<after s>[,<offset hex>,<value>] (tests, a dedicated server: a round's end on demand): <after s>
 // after the first tick, and 4 s and 10 s after it, each of the server's ticket counters (ServerTicketCounterEntity:
 // vtable 0x820150A0, found from its type record 0x82D568B0, one a team) logged, its first 0x94 bytes as words; with an
@@ -619,6 +662,7 @@ REX_HOOK_RAW(sub_824123F0) {
     for (;;) std::this_thread::sleep_for(std::chrono::hours(1));
   }
   DevMoveSpawns(base);
+  DevFindSpawns(base);
   DevTickets(base);
   // The null page guard first, as in a real tick: on Linux a read of reserved guest memory gives zeros, and the
   // self test's walks then read the null page (without the guard that read faults again and again).

@@ -305,7 +305,7 @@
       kit::PaperArt(d, band, hb);
       const std::string eyebrow = !online_ok ? "THE SERVER LIST IS NOT REACHABLE RIGHT NOW"
                                   : !best      ? "NO SERVER WITH ROOM RIGHT NOW"
-                                               : fmt::format("{} \xC2\xB7 {} / {} PLAYERS{}", best->promoted ? "PROMOTED" : best->official ? "REBORN" : "COMMUNITY",
+                                               : fmt::format("{} \xC2\xB7 {} / {} PLAYERS{}", best->promoted ? "TRUSTED COMMUNITY SERVER" : best->official ? "REBORN OFFICIAL SERVER" : "COMMUNITY",
                                                              best->players, best->max_players,
                                                              best->ping_ms >= 0 ? fmt::format(" \xC2\xB7 {} MS", best->ping_ms) : "");
       kit::Spaced(d, f.typed, st(11.25f), ImVec2(band.x + st(20), band.y + st(14)), kit::kInkSection, eyebrow, st(2));

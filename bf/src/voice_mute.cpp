@@ -106,7 +106,11 @@ bool RunText(const uint8_t* base, uint32_t head, std::string& out, size_t max) {
       const uint16_t c = Load16(base, p);
       if (c == 13 || c == 10 || c == 189) continue;
       if (out.size() >= max) return false;
-      out += c >= 32 && c < 127 ? char(c) : '?';
+      // A soldier name's trademark sign (player_name.h) as UTF-8: the game's text holds it as one character, or as
+      // its three bytes one by one; either way the row's name reads as the player list's.
+      if (c == 0x2122) out += "\xE2\x84\xA2";
+      else if (c >= 0x80 && c < 0x100) out += char(c);
+      else out += c >= 32 && c < 127 ? char(c) : '?';
     }
   }
   return !out.empty();

@@ -3,6 +3,10 @@
 
 #include "clan_tags.h"
 
+#include <cstring>
+
+#include "player_name.h"
+
 #include <algorithm>
 #include <chrono>
 #include <cmath>
@@ -258,8 +262,13 @@ bool ReadName(const uint8_t* base, uint32_t player, std::string& out) {
                  cap = Load32(base, player + kName + 8);
   if (b < 0x00100000u || b >= 0xFFF00000u || e < b || e - b > 32 || cap < e || cap - b > 4096) return false;
   out.assign(reinterpret_cast<const char*>(base + b), e - b);
-  for (char c : out)
-    if (static_cast<unsigned char>(c) < 0x20 || static_cast<unsigned char>(c) >= 0x7F) return false;
+  for (size_t i = 0; i < out.size(); ++i) {
+    if (out.compare(i, player_name::kTm.size(), player_name::kTm) == 0) {  // a soldier name's trademark sign
+      i += player_name::kTm.size() - 1;
+      continue;
+    }
+    if (static_cast<unsigned char>(out[i]) < 0x20 || static_cast<unsigned char>(out[i]) >= 0x7F) return false;
+  }
   return true;
 }
 
@@ -391,10 +400,15 @@ float DrawDevText(ImDrawList* d, ImFont* font, float size, const ImVec2& at, con
   const double now = ImGui::GetTime();
   float x = at.x;
   const float off = size * 0.07f;
-  for (size_t i = 0; i < text.size(); ++i) {
-    const char ch[2] = {text[i], 0};
+  int letter = 0;
+  for (size_t i = 0; i < text.size(); ++i, ++letter) {
+    char ch[4] = {text[i], 0, 0, 0};
+    if (text.compare(i, player_name::kTm.size(), player_name::kTm) == 0) {  // the trademark sign, whole
+      std::memcpy(ch, player_name::kTm.data(), player_name::kTm.size());
+      i += player_name::kTm.size() - 1;
+    }
     if (shadow) d->AddText(font, size, ImVec2(x + off, at.y + off), IM_COL32(0, 0, 0, int(180 * alpha)), ch);
-    d->AddText(font, size, ImVec2(x, at.y), DevColour(int(i), now, alpha), ch);
+    d->AddText(font, size, ImVec2(x, at.y), DevColour(letter, now, alpha), ch);
     x += font->CalcTextSizeA(size, 1e9f, 0, ch).x;
   }
   return x - at.x;

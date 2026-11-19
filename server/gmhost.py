@@ -380,7 +380,12 @@ def i32(v):
 
 
 def text(s):
-    b = s.encode('latin-1')
+    # A soldier name's trademark sign (since v0.4.7.4) as UTF-8, the bytes the player's own game holds; every other
+    # character Latin-1 has, as before.
+    try:
+        b = s.encode('latin-1')
+    except UnicodeEncodeError:
+        b = b''.join(c.encode('latin-1') if ord(c) < 256 else c.encode('utf-8') for c in s)
     return i32(len(b)) + b
 
 

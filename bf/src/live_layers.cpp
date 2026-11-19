@@ -39,6 +39,8 @@
 #include <rex/logging.h>
 #include <rex/ppc/context.h>
 
+#include "player_name.h"
+
 #if defined(_WIN32)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
@@ -235,7 +237,7 @@ uint32_t OnlinePlayerId() {
 const std::string& PlayerName() { return g_player_name; }
 uint32_t PlayerId() { return g_player_id; }
 void SetPlayerIdentity(const std::string& name, uint32_t id) {
-  g_player_name = name.substr(0, 15);
+  g_player_name = name.size() <= player_name::kMaxBytes ? name : player_name::Clean(name, true);  // never half a sign
   g_player_id = id;
   REXLOG_INFO("BF LIVE: playing as {} (id {:08X})", g_player_name, id);
 }

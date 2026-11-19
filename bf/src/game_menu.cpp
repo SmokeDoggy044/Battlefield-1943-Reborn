@@ -64,10 +64,13 @@
 #include "voice_mute.h"  // the scoreboard's voice mute
 #include "discord_presence.h"
 #include "world_sync.h"
+#include "player_name.h"
 #include "text_filter.h"
 #include "changelog.h"
+#include "http.h"            // the video tutorial's logo and thumbnail (game_menu_tutorial.inc)
 #include "news.h"
 #include "news_video.h"
+#include "picture_decode.h"
 #include "paste_keys.h"  // Ctrl+V and Shift+Insert, the clipboard (the name page, Direct connect)
 #include "report.h"  // Report an issue (game_menu_report.inc)
 #include "update.h"
@@ -129,6 +132,7 @@ REXCVAR_DEFINE_STRING(bf_upscaler_mode, "quality", "BF1943",
 REXCVAR_DECLARE(bool, bf_unlock_fps);  // frame_rate.cpp
 REXCVAR_DECLARE(bool, bf_flag_letters);  // capture_points.cpp: letters in the capture point flags (Enhancements)
 REXCVAR_DECLARE(bool, server);         // server_mode.cpp: a dedicated server has no menu
+REXCVAR_DECLARE(std::string, cache_root);  // the runtime's: the shader cache's folder (empty: user\cache)
 REXCVAR_DECLARE(double, bf_max_fps);
 REXCVAR_DECLARE(bool, native_x_renderer);  // NativeXRenderer: its own shader storage is made before the first draw
 REXCVAR_DECLARE(bool, native_x_renderer_fill_screen);  // NativeXRenderer: ultrawide fill (Aspect ratio row)
@@ -791,6 +795,7 @@ class GameMenu final : public rex::ui::ImGuiDialog {
   void ShowPause() {
     open_ = true, page_ = Page::kPause, pause_row_ = 0, pause_focus_panel_ = false, handing_over_ = -1;
     pause_confirm_ = -1;
+    pause_page_ = 0, pause_map_wide_ = true;  // the map first, the whole battle (TekRantGaming, 18 Nov 2026)
     pause_opened_at_ = ImGui::GetTime();
   }
   bool open() const { return open_; }
@@ -966,7 +971,8 @@ class GameMenu final : public rex::ui::ImGuiDialog {
       if (stage == 2 && last_stage_ > 2) ach_join_ = AchJoin::kNone;
       last_stage_ = stage;
     }
-    if (page_ == Page::kJoining) {
+    QueueTick();  // a place in a full server's queue: its answers, its turn
+    if (page_ == Page::kJoining && !queue_popup_) {
       const int stage = MenuDriverStage();
       if (!pending_.empty() && stage == 2) {  // the game is at its menu now
         // The backend keeps a reservation for five minutes, and with its version gate gives a server only to a game
@@ -1024,7 +1030,7 @@ class GameMenu final : public rex::ui::ImGuiDialog {
       // Quiet while the news' video plays with its sound (game_menu_news.inc); back once it ends or pauses, or the
       // window closes (TekRantGaming, 16 Nov 2026).
       const bool want = our_menus && (Cvar("bf_menu_music") != "false" || dev_music) &&
-                        !(news_open_ && !news_muted_ && news::VideoPlaying());
+                        !(news_open_ && !news_muted_ && news::VideoPlaying()) && !(tutorial_open_ && news::VideoPlaying());
       PlayMenuMusic(UserDir() / "cache" / "extracted" / "music" / "menu.wav", want);
     }
     NotePresence();  // Discord Rich Presence, the menu open or not
@@ -1207,9 +1213,10 @@ class GameMenu final : public rex::ui::ImGuiDialog {
     // news' video (a window of its own) is hidden.
     const bool shader_page = page_ == Page::kShaders;
     if (shader_page && news_open_) news::VideoHide();
+    if (tutorial_open_ && page_ != Page::kSetup) CloseTutorial("the game files page left");
     const bool over_popup =
         !shader_page && (update_popup_ || whats_new_open_ || own_popup_ || tick_popup_ || pw_popup_ || exp_popup_ ||
-                         new_version_popup_ || notice_popup_ || news_open_);
+                         new_version_popup_ || notice_popup_ || news_open_ || queue_popup_ || tutorial_open_);
     const Input popup_in = in;
     const bool popup_down = io.MouseDown[0];
     const ImVec2 popup_delta = io.MouseDelta;
@@ -1256,6 +1263,7 @@ class GameMenu final : public rex::ui::ImGuiDialog {
       io.MouseDown[0] = popup_down, io.MouseDelta = popup_delta, io.MouseWheel = popup_wheel;
       if (update_popup_) UpdatePopup(d, io, popup_in);
       else if (notice_popup_) NoticePopup(d, io, popup_in);
+      else if (queue_popup_) QueuePopup(d, io, popup_in);
       else if (new_version_popup_) NewVersionPopup(d, io, popup_in);
       else if (own_popup_) OwnBackendPopup(d, io, popup_in);
       else if (exp_popup_) ExperimentalPopup(d, io, popup_in);
@@ -1263,10 +1271,14 @@ class GameMenu final : public rex::ui::ImGuiDialog {
       else if (pw_popup_) PasswordPopup(d, io, popup_in);
       else if (whats_new_open_) WhatsNewPopup(d, io, popup_in);
       else if (news_open_) NewsPopup(d, io, popup_in);
+      else if (tutorial_open_) TutorialPopup(d, io, popup_in);
       // The news' video is a window of its own over ours: hidden while another pop-up is in front of the news.
       if (news_open_ && (update_popup_ || notice_popup_ || new_version_popup_ || own_popup_ || exp_popup_ || tick_popup_ ||
                          pw_popup_ || whats_new_open_))
         news::VideoHide();
+      if (tutorial_open_ && (update_popup_ || notice_popup_ || new_version_popup_ || own_popup_ || exp_popup_ || tick_popup_ ||
+                             pw_popup_ || whats_new_open_ || news_open_ || queue_popup_))
+        news::VideoHide();  // the tutorial's video too
     }
     MenuSounds(sound_before, popup_in, popup_down, popup_delta);
     // The stamp on BF's own menus too: its main menu (and our pages over it) and the pause; never over a match.
@@ -1313,13 +1325,13 @@ class GameMenu final : public rex::ui::ImGuiDialog {
     for (int v : {row_, tab_, pm_row_, pm_map_, direct_key_, popup_row_, pause_row_, home_row_, news_focus_,
                   news_first_card_, setup_tab_, prompts_row_, help_row_, ctl_tab_, browse_row_, browser_tab_,
                   preset_cursor_, voice_choice_, fr_row_, slot_cursor_, files_card_, allset_row_, name_key_,
-                  pm_edit_key_, project_, capture_slot_, ctl_device_})  // ctl_device_: Settings > Controls' card
+                  pm_edit_key_, project_, capture_slot_, ctl_device_, pause_page_})  // ctl_device_: Settings > Controls' card
       HashIn(h, uint64_t(int64_t(v)));
     HashIn(h, pause_focus_panel_);
     l.selection = h;
     h = 0xCBF29CE484222325ull;
     for (bool b : {update_popup_, whats_new_open_, whats_new_all_, own_popup_, tick_popup_, pw_popup_, exp_popup_,
-                   new_version_popup_, notice_popup_, news_open_, quit_popup_, skip_popup_, files_help_, browsing_,
+                   new_version_popup_, notice_popup_, news_open_, tutorial_open_, queue_popup_, quit_popup_, skip_popup_, files_help_, browsing_,
                    browser_typing_, browser_has_players_, browser_not_full_, browser_night_, quick_waiting_ > 0,
                    direct_keys_, direct_letters_, name_keys_})
       HashIn(h, b);
@@ -1454,7 +1466,10 @@ class GameMenu final : public rex::ui::ImGuiDialog {
   AchJoin ach_join_ = AchJoin::kNone;
   double ach_in_world_since_ = -1;
   void NoteRebornAchievements() {
-    if (ach_join_ == AchJoin::kNone || REXCVAR_GET(server)) return;
+    if (REXCVAR_GET(server)) return;
+    // The vehicle ones (Steel Behemoth and the rest): whatever the match, from the seat the soldier sits in.
+    if (reborn_achievements::VehicleTick(InMatch() && LevelLoaded())) SendLeaderboard("an achievement");
+    if (ach_join_ == AchJoin::kNone) return;
     const double now = ImGui::GetTime();
     if (!(InMatch() && LevelLoaded() && comms::InWorld())) {
       ach_in_world_since_ = -1;
@@ -2355,7 +2370,16 @@ class GameMenu final : public rex::ui::ImGuiDialog {
   // you into one of these experimental" servers); 30 and 60 both, a server at this game's own rate first (60 since 14
   // Nov 2026, "all servers are going to be 60 Hertz": no restart to join it), then the busiest with room.
   static bool QuickBetter(const ServerInfo& sv, const ServerInfo* best) {
-    if ((sv.Tick() != 30 && sv.Tick() != 60) || sv.players >= sv.max_players) return false;
+#if defined(BF_DEV_TOOLS)
+    // BF_DEV_JOIN_FULL=1 (the join queue's tests): a full server is picked too, so the test's client waits in its queue.
+    static const bool join_full = [] {
+      const char* v = std::getenv("BF_DEV_JOIN_FULL");
+      return v && *v == '1';
+    }();
+#else
+    constexpr bool join_full = false;
+#endif
+    if ((sv.Tick() != 30 && sv.Tick() != 60) || (sv.players >= sv.max_players && !join_full)) return false;
     if (!best) return true;
     const bool own = sv.Tick() == TickRate(), best_own = best->Tick() == TickRate();
     if (own != best_own) return own;
@@ -2416,8 +2440,8 @@ class GameMenu final : public rex::ui::ImGuiDialog {
     const std::string promo_from = exp_popup_server_.description.empty() ? std::string()
                                    : "From the server: " + exp_popup_server_.description;
     if (exp_promo_) {
-      paragraphs = {"This server is run by a member of our community. It's in good standing, so we've promoted it to "
-                    "the Reborn list.",
+      paragraphs = {"This server is run by a member of our community. It's in good standing, so we've listed it with ours "
+                    "on the Reborn tab as a Trusted Community Server.",
                     "If you run into any problems, let the server's owner know, or tell us on Discord."};
       if (!promo_from.empty()) paragraphs.push_back(promo_from.c_str());
     } else if (exp_us_) {
@@ -2441,7 +2465,7 @@ class GameMenu final : public rex::ui::ImGuiDialog {
       kit::Paper(d, a, b, st.u);
       kit::Tape(d, ImVec2((a.x + b.x) * 0.5f, a.y), st(110), st(26), -3);
       kit::Heading(d, st(36), ImVec2(a.x + st(30), a.y + st(26)), kit::kInk,
-                   exp_promo_ ? "COMMUNITY SERVER" : exp_us_ ? "US CENTRAL PLAYTEST" : "EXPERIMENTAL SERVER", st(1.5f),
+                   exp_promo_ ? "TRUSTED COMMUNITY SERVER" : exp_us_ ? "US CENTRAL PLAYTEST" : "EXPERIMENTAL SERVER", st(1.5f),
                    st(620));
       kit::Spaced(d, f.typed, st(11), ImVec2(a.x + st(32), a.y + st(72)), kit::kStamp,
                   fmt::format("{} \xC2\xB7 {} HZ", exp_popup_server_.name, exp_popup_server_.Tick()), st(1.5f));
@@ -2606,8 +2630,10 @@ class GameMenu final : public rex::ui::ImGuiDialog {
 #endif
     if (!needs.empty() && update::IsNewerVersion(needs, BfVersion())) return AskToUpdate(needs, sv.name);
     ServerNotice refusal;
-    switch (list_.Reserve(sv.gid, &needs, &refusal)) {
+    QueuePlace place;
+    switch (list_.Reserve(sv.gid, &needs, &refusal, &place)) {
       case ServerList::Reserved::kYes: break;
+      case ServerList::Reserved::kQueued: return EnterQueue(sv, place);  // full: a place in its queue (QueuePopup)
       case ServerList::Reserved::kOutdated: return AskToUpdate(needs, sv.name);
       case ServerList::Reserved::kRefused: return ShowNotice(refusal, sv.name);
       case ServerList::Reserved::kNo:
@@ -2617,6 +2643,10 @@ class GameMenu final : public rex::ui::ImGuiDialog {
         BrowserNote("COULD NOT JOIN: THE SERVER LIST DID NOT ANSWER");
         return;
     }
+    JoinReserved(sv);
+  }
+  // The join once the backend keeps the server for this game: at once, or at its turn in the server's queue.
+  void JoinReserved(const ServerInfo& sv) {
     reserved_at_ = ImGui::GetTime();
     SetJoinedServerNight(sv.night);
     joining_ = sv.name;
@@ -2646,6 +2676,133 @@ class GameMenu final : public rex::ui::ImGuiDialog {
       StartGameFromLauncher();
     }
   }
+  // ---- The join queue (TekRantGaming, 18 Nov 2026: "a server que system with a popup showing you your position in the
+  // que that updates there should also be a close button on this to"; server_list.h QueuePlace, server/plasma.py
+  // QUEUE). A full server whose backend has the queue gives this game a place in it: our Joining page comes up with
+  // IN QUEUE over it, the server's name and the place, which the backend's answers (every 2 s, QueueWatch) move up.
+  // At its turn the join goes on by itself (JoinReserved); Close (B, Esc, a click, or A on it) gives the place up and
+  // goes back to the page the join was picked on. A backend from before the queue answers "full" (the notice, as ever).
+  bool queue_popup_ = false;
+  ServerInfo queue_server_;
+  QueuePlace queue_place_;
+  Page queue_from_page_ = Page::kMain;
+  double queue_since_ = 0;
+  QueueWatch queue_watch_;
+  void EnterQueue(const ServerInfo& sv, const QueuePlace& place) {
+    queue_from_page_ = page_ == Page::kJoining ? (pre_game_ ? Page::kHome : Page::kMain) : page_;
+    queue_server_ = sv, queue_place_ = place;
+    queue_popup_ = true, queue_since_ = ImGui::GetTime(), popup_row_ = 0;
+    joining_ = sv.name, joining_map_ = sv.map;
+    joined_from_start_ = MenuDriverStage() < 2;
+    failed_ = false, tutorial_ = false;
+    page_ = Page::kJoining;
+    queue_watch_.Start(place);
+    REXLOG_INFO("BF join: {} is full: in its queue, {} of {}", sv.name, place.position, place.total);
+  }
+  void LeaveQueue(const char* how) {
+    if (!queue_popup_) return;
+    queue_popup_ = false;
+    queue_watch_.Stop(true);
+    page_ = queue_from_page_;
+    REXLOG_INFO("BF join: left the queue of {} ({}) after {:.0f} s, at {} of {}", queue_server_.name, how,
+                ImGui::GetTime() - queue_since_, queue_place_.position, queue_place_.total);
+  }
+  // Every frame while in a queue: the place from the watch's last answer, the turn, or the end of the wait.
+  void QueueTick() {
+    if (!queue_popup_) return;
+    const QueueWatch::Snapshot snap = queue_watch_.Get();
+    if (snap.state == QueueWatch::State::kWaiting) {
+      if (snap.place.position != queue_place_.position || snap.place.total != queue_place_.total)
+        REXLOG_INFO("BF join: the queue of {}: now {} of {}", queue_server_.name, snap.place.position, snap.place.total);
+      queue_place_ = snap.place;
+      return;
+    }
+    queue_popup_ = false;
+    queue_watch_.Stop(false);
+    if (snap.state == QueueWatch::State::kTurn) {
+      ServerInfo sv = queue_server_;
+      sv.gid = snap.place.gid;  // the same server, registered again while the player waited
+      REXLOG_INFO("BF join: {}: our turn in its queue after {:.0f} s; joining", sv.name, ImGui::GetTime() - queue_since_);
+      return JoinReserved(sv);
+    }
+    page_ = queue_from_page_;
+    if (snap.state == QueueWatch::State::kRefused) {
+      REXLOG_INFO("BF join: the queue of {} ended: {}", queue_server_.name, snap.refusal.text);
+      return ShowNotice(snap.refusal, queue_server_.name);
+    }
+    REXLOG_WARN("BF join: the queue of {}: the server list stopped answering", queue_server_.name);
+    ShowNotice({"gone", "COULD NOT JOIN", "The server list stopped answering while you waited for a place. Try again in a moment."},
+               queue_server_.name);
+  }
+  void QueuePopup(ImDrawList* d, ImGuiIO& io, Input in) {
+    const Stage st = StageOf(io);
+    const kit::Fonts& f = kit::GetFonts();
+    d->AddRectFilled(ImVec2(0, 0), io.DisplaySize, IM_COL32(10, 12, 8, 190));
+    const int pos = std::max(1, queue_place_.position), total = std::max(pos, queue_place_.total);
+    const double waited = ImGui::GetTime() - queue_since_;
+    const float w = st(520);
+    const float h = st(26) + st(22) + st(52) + st(30) + st(56) + st(34) + st(44) + st(70) + st(20);
+    const float top = st.P(0, 360).y - h * 0.5f;
+    const ImVec2 a(st.P(380, 0).x, top), b(st.P(900, 0).x, top + h);
+    {
+      kit::Turn turn(d, ImVec2((a.x + b.x) * 0.5f, (a.y + b.y) * 0.5f), -0.3f);
+      kit::Paper(d, a, b, st.u);
+      kit::Tape(d, ImVec2((a.x + b.x) * 0.5f, a.y), st(110), st(26), -3);
+      float y = a.y + st(26);
+      kit::Spaced(d, f.typed, st(11), ImVec2(a.x + st(32), y), kit::kStamp, "THE SERVER LIST \xC2\xB7 SERVER FULL", st(1.5f));
+      y += st(22);
+      kit::Heading(d, st(40), ImVec2(a.x + st(30), y), kit::kInk, "IN QUEUE", st(1.5f), w);
+      y += st(52);
+      std::string name = queue_server_.name;  // one line: cut with an ellipsis when too long
+      while (name.size() > 4 && kit::TextWidth(f.ui_bold, st(20), name + "...") > w) name.pop_back();
+      if (name != queue_server_.name) name += "...";
+      d->AddText(f.ui_bold, st(20), ImVec2(a.x + st(30), y), kit::kInkSoft, name.c_str());
+      y += st(30);
+      const std::string place = fmt::format("Position {} of {}", pos, total);
+      d->AddText(f.ui_bold, st(36), ImVec2(a.x + st(30), y), kit::kInk, place.c_str());
+      // The breathing dot: the place is watched (it moves by itself).
+      const float pulse = 0.5f + 0.5f * float(std::sin(ImGui::GetTime() * 3.0));
+      const float px = a.x + st(30) + kit::TextWidth(f.ui_bold, st(36), place) + st(18);
+      d->AddCircleFilled(ImVec2(px, y + st(22)), st(6), IM_COL32(93, 138, 50, int(110 + 145 * pulse)));
+      y += st(56);
+      // The queue as a row: the players before this one, this one (green), those after; a bar for a long one.
+      const float row_w = w - st(10);
+      if (total <= 16) {
+        const float cell = std::min(st(28), (row_w - st(6) * (total - 1)) / total);
+        for (int i = 0; i < total; ++i) {
+          const ImVec2 c0(a.x + st(30) + i * (cell + st(6)), y), c1(c0.x + cell, y + st(18));
+          if (i + 1 == pos) d->AddRectFilled(c0, c1, kit::kGreen);
+          else if (i + 1 < pos) d->AddRectFilled(c0, c1, kit::kInkFaint);
+          else d->AddRect(c0, c1, kit::kBorder, 0, 0, st(2));
+        }
+      } else {
+        const ImVec2 b0(a.x + st(30), y), b1(b0.x + row_w, y + st(18));
+        d->AddRectFilled(b0, b1, IM_COL32(34, 36, 27, 38));
+        d->AddRectFilled(b0, ImVec2(b0.x + row_w * float(pos - 1) / float(total), b1.y), kit::kInkFaint);
+        const float mx = b0.x + row_w * (float(pos) - 0.5f) / float(total);
+        d->AddRectFilled(ImVec2(mx - st(4), b0.y - st(3)), ImVec2(mx + st(4), b1.y + st(3)), kit::kGreen);
+        d->AddRect(b0, b1, kit::kInk, 0, 0, st(2));
+      }
+      y += st(34);
+      const int secs = int(waited);
+      kit::Wrapped(d, f.ui, st(16), ImVec2(a.x + st(30), y), kit::kInkFaint,
+                   fmt::format("You join by yourself when a place opens. Waiting {}:{:02d}.", secs / 60, secs % 60), w);
+    }
+    // Close, the only button (always the one picked): B or Esc, a click, or A on it.
+    const ImVec2 c0(a.x + st(30), b.y - st(70)), c1(a.x + st(230), b.y - st(26));
+    const bool hover = ImGui::IsMouseHoveringRect(c0, c1);
+    d->AddRectFilled(ImVec2(c0.x, c0.y + st(4)), ImVec2(c1.x, c1.y + st(4)), kit::kGreenShadow);
+    d->AddRectFilled(c0, c1, kit::kGreen);
+    const float gw = kit::Glyph(nullptr, PromptStyle(), kit::Button::kB, KeyFor(kit::Button::kB), ImVec2(0, 0), st(20), false);
+    const float tw = kit::TextWidth(f.ui_bold, st(20), "Close");
+    const float x0 = (c0.x + c1.x - gw - st(8) - tw) * 0.5f;
+    kit::Glyph(d, PromptStyle(), kit::Button::kB, KeyFor(kit::Button::kB), ImVec2(x0, (c0.y + c1.y) * 0.5f), st(20));
+    d->AddText(f.ui_bold, st(20), ImVec2(x0 + gw + st(8), c0.y + st(8)), IM_COL32(255, 255, 255, 255), "Close");
+    if (in.back) return LeaveQueue(device_.load() == Device::kPad ? "B" : "Esc");
+    if (hover && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) return LeaveQueue("a click on Close");
+    if (in.accept && waited > 0.6) return LeaveQueue("A on Close");  // not the A of the join itself
+  }
+
   // The game started from Home's Joining page (a server picked, or Help's tutorial): its films, title and sign in
   // hidden behind that page. King Kong's rule: shaders not prepared for this version (just updated, or never) get the
   // shader page first, then the Joining page again (AfterShaders); prepared ones are made behind it.
@@ -3979,7 +4136,10 @@ class GameMenu final : public rex::ui::ImGuiDialog {
     // Grass and shrubs (NativeXRenderer grass.cpp) are always on (TekRantGaming, 10 Nov 2026): no row turns them off, only
     // their distance below is the player's (the F8 panel still switches them, for testing).
     // HD textures (TekRantGaming, 9 Nov 2026: an HD texture pack, imported in the launcher, toggled here; NativeXRenderer D149).
-    {
+    // Benched since v0.4.7.4 (TekRantGaming, 18 Nov 2026: "Remove the HD textures options in the game settings ... we're
+    // benching it for a while"): the two rows are not shown and no pack is given to the renderer (bf1943_app.h).
+    constexpr bool kHdTexturesShown = false;  // the code stays for when they come back
+    if (kHdTexturesShown) {
       const fs::path pack = HdPackPath(UserDir());
       std::error_code ec;
       const bool have = fs::exists(pack, ec);
@@ -4014,6 +4174,24 @@ class GameMenu final : public rex::ui::ImGuiDialog {
                           "native_grass_radius",
                           {{"Low", "45.000000"}, {"Medium", "90.000000"}, {"High", "180.000000"},
                            {"Extreme", "360.000000"}, {"Full map", "1440.000000"}}));
+    // Rebuild shaders (TekRantGaming, 18 Nov 2026: players fixed black bars and black textures by deleting the shader
+    // cache by hand): the whole cache deleted at the next start and the shader page builds it again (update.cpp).
+    {
+      const fs::path cache = REXCVAR_GET(cache_root).empty() ? UserDir() / "cache" : fs::path(REXCVAR_GET(cache_root));
+      const bool waiting = update::ShaderRebuildRequested(cache);
+      SettingRow rebuild{"Shaders", "Rebuild shaders",
+                         "Deletes the game's saved shaders and builds them all again the next time the game starts, "
+                         "behind the shader screen. Use it if you see black textures, black bars or other drawing "
+                         "faults. Applies at the next start."};
+      rebuild.value = waiting ? "At the next start" : "Rebuild";
+      rebuild.activate = [this, cache] {
+        if (update::RequestShaderRebuild(cache)) {
+          settings_.values["shaders_prepared_for"] = "";  // the shader page shows at the next start
+          settings_.Save();
+        }
+      };
+      rows.push_back(rebuild);
+    }
     return rows;
   }
 
@@ -5005,7 +5183,7 @@ class GameMenu final : public rex::ui::ImGuiDialog {
   // leaves the soldier where it stands, so the game's suicide follows two seconds later and the player spawns at the
   // new team's base.
   static constexpr const char* kPauseRows[] = {"RESUME",   "MY SQUAD",     "CHANGE TEAM",  "SCOREBOARD", "SETTINGS",
-                                               "CONTROLS", "LEADERBOARDS", "ACHIEVEMENTS", "EXIT GAME",  "SUICIDE"};
+                                               "CONTROLS", "LEADERBOARDS", "ACHIEVEMENTS", "EXIT GAME",  "REDEPLOY"};
   static constexpr int kPauseResume = 0, kPauseSquad = 1, kPauseTeam = 2, kPauseScoreboard = 3, kPauseSettingsRow = 4,
                        kPauseControls = 5, kPauseLeaderboards = 6, kPauseAchievements = 7, kPauseExit = 8,
                        kPauseSuicide = 9;
@@ -5161,13 +5339,13 @@ class GameMenu final : public rex::ui::ImGuiDialog {
       const ImVec2 ca((pa.x + pb.x - w) * 0.5f, sz.y * 0.5f - h * 0.5f), cb(ca.x + w, ca.y + h);
       kit::Paper(d, ca, cb, u, false);
       kit::Spaced(d, f.typed, 18 * u, ImVec2(ca.x + 40 * u, ca.y + 34 * u), kit::kInkFaint,
-                  exit ? "EXIT GAME" : "SUICIDE", 4 * u);
+                  exit ? "EXIT GAME" : "REDEPLOY", 4 * u);
       Text(d, f.stencil, 54 * u, ImVec2(ca.x + 38 * u, ca.y + 64 * u), kit::kInk,
-           exit ? "LEAVE THIS MATCH?" : "END THIS LIFE?");
+           exit ? "LEAVE THIS MATCH?" : "REDEPLOY NOW?");
       kit::Wrapped(d, f.typed, 20 * u, ImVec2(ca.x + 40 * u, ca.y + 140 * u), kit::kInkSoft,
                    exit ? (pm_hosting_ ? "You go back to the main menu, and your custom match ends for everyone in it."
                                        : "You go back to the main menu. Your score in this round stays with the server.")
-                        : "Your soldier dies and you pick a new spawn point. It counts as a death.",
+                        : "Your soldier leaves the field and you pick a new spawn point. It counts as a death.",
                    w - 80 * u);
       const ImVec2 ya(ca.x + 40 * u, cb.y - 84 * u), yb(ca.x + 300 * u, cb.y - 30 * u);
       const ImVec2 na(ca.x + 330 * u, cb.y - 84 * u), nb(ca.x + 590 * u, cb.y - 30 * u);
@@ -5421,6 +5599,12 @@ class GameMenu final : public rex::ui::ImGuiDialog {
     // The steps of a join: the game's hidden start and sign in first when it was not running yet (a server picked on
     // Home), then connecting, the server's own join, and the map's load.
     std::vector<std::string> steps;
+    if (queue_popup_) {  // in a full server's queue (QueuePopup over this page): the wait is the first step
+      TransitPage(d, io, MapIndexOf(joining_map_), "Waiting for a place", joining_map_.empty() ? "Battlefield 1943" : joining_map_,
+                  joining_, {"Waiting for a place", "Connecting", "Joining the server",
+                             joining_map_.empty() ? "Loading the map" : "Loading " + joining_map_}, 0, "");
+      return;
+    }
     const bool starting = joined_from_start_;
     if (starting) steps.push_back("Starting the game");
     steps.push_back("Connecting");
@@ -5444,6 +5628,7 @@ class GameMenu final : public rex::ui::ImGuiDialog {
 #include "game_menu_clan.inc"
 #include "game_menu_home.inc"
 #include "game_menu_news.inc"
+#include "game_menu_tutorial.inc"  // the first start's video tutorial (the news' video player)
 #include "game_menu_report.inc"  // Report an issue, the form that files on GitHub
 #include "game_menu_browser.inc"
 #include "game_menu_progress.inc"  // Stats & Rewards, Leaderboards, Achievements
@@ -5692,6 +5877,7 @@ class GameMenu final : public rex::ui::ImGuiDialog {
   int modes_monitor_ = -1;
   bool modes_listed_ = false;
   int pause_row_ = 0;             // the pause list's row (kPauseItems)
+  int pause_page_ = 0;            // the pause's right side: 0 the map (first), 1 the field report; LB and RB (Q, E)
   int bf_cursor_ = 0;             // BF's own pause list's selected row, under ours
   int pause_pending_row_ = -1, pause_probe_frames_ = 0;  // a row of BF's chosen: BF's selection read first
   bool gpu_benchmark_started_ = false;  // D150: the GPU's speed timed, from gpu_benchmark_at_ (2 s after the shaders)
@@ -6022,13 +6208,7 @@ void ApplyPlayerIdentity(const fs::path& user_dir) {
   settings.path = user_dir / "bf1943-settings.txt";
   settings.Load();
   auto clean = [](std::string name) {
-    std::string out;
-    for (char c : name)
-      if (std::isalnum(static_cast<unsigned char>(c)) || c == ' ' || c == '_') out += c;
-    out.erase(0, out.find_first_not_of(' '));
-    if (out.size() > 15) out.resize(15);
-    while (!out.empty() && out.back() == ' ') out.pop_back();
-    return out;
+    return player_name::Clean(name, true);  // letters, digits, spaces, underscores, and a trademark sign at the end
   };
   std::random_device random;
   bool changed = false;

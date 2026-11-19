@@ -35,8 +35,17 @@ def period_ids(now=None):
     return {'month': '%04d-%02d' % (d.year, d.month), 'week': '%04d-W%02d' % (year, week)}
 
 
+TM = '\u2122'  # the trademark sign a soldier name may end with (since v0.4.7.4: ZALIAS plays as "ZALIAS\u2122")
+
+
 def clean_name(name):
-    return ''.join(c for c in str(name) if c.isalnum() or c in ' _')[:15].strip()
+    """A name as players' games and the backend keep it: letters, digits, spaces and underscores, and one trademark
+    sign kept at its end, at most 15 bytes in UTF-8 (the game's own name buffers: bf/src/player_name.h)."""
+    raw = str(name)
+    core = ''.join(c for c in raw if c.isalnum() or c in ' _')[:15].strip()
+    if TM in raw and core:
+        return core[:12].rstrip() + TM
+    return core
 
 
 def empty():

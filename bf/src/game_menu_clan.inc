@@ -109,7 +109,8 @@
         const float cx = bx + st(16) + kit::TextWidth(f.typed, st(30), text);
         d->AddRectFilled(ImVec2(cx, y + st(12)), ImVec2(cx + st(3), y + st(46)), kit::kInk);
       }
-      const std::string count = std::to_string(text.size()) + " / " + std::to_string(max);
+      const size_t shown = &text == &name_text_ ? player_name::Chars(text) : text.size();  // the sign is one
+      const std::string count = std::to_string(shown) + " / " + std::to_string(max);
       d->AddText(f.typed, st(14), ImVec2(bx + bw - st(14) - kit::TextWidth(f.typed, st(14), count), y + st(22)),
                  kit::kInkFaint, count.c_str());
       // A click on a box puts the typing there; a right click also opens the box's menu (PASTE, CLEAR).

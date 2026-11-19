@@ -109,6 +109,7 @@ set(BF1943_SOURCES
     src/dev_types.cpp
     src/dev_team_scan.cpp
     src/dev_player_scan.cpp
+    src/dev_vehicle_scan.cpp
     src/modern_mode.cpp
     src/pipeline_upload.cpp
     src/report.cpp

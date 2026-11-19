@@ -389,6 +389,21 @@ def team_list_checks():
         plasma.team_owner('TekRanqGamxr%d' % i)
     took = (time.time() - started) / 3
     report(bad, 'a name looked up in under a millisecond (%.2f ms at worst)' % took, took < 1.0)
+    # The trademark sign (v0.4.7.4, ZALIAS plays as "ZALIAS™"): once, at the end, within 15 bytes of UTF-8.
+    tm = '™'
+    import player_stats
+    report(bad, 'ZALIAS%s is a valid name and kept for ZALIAS' % tm, plasma.valid_name('ZALIAS' + tm) and
+           (plasma.team_owner('ZALIAS' + tm) or {}).get('owner') == 'ZALIAS')
+    wrong = [n for n in (tm * 3, 'AB' + tm, 'A' + tm + 'B', 'ABCDEFGHIJKLM' + tm, 'Gamer' + tm + tm)
+             if plasma.valid_name(n)]
+    report(bad, 'the sign only once, at the end, after 3 letters, within 15 bytes', not wrong, wrong)
+    cleaned = [player_stats.clean_name(n) for n in ('ZAL' + tm + 'IAS', 'ABCDEFGHIJKLMNO' + tm, tm)]
+    report(bad, 'names cleaned keep one sign at the end within 15 bytes', cleaned ==
+           ['ZALIAS' + tm, 'ABCDEFGHIJKL' + tm, ''], cleaned)
+    raw = ('ZALIAS' + tm).encode('utf-8').decode('latin-1')  # as parse_payload reads the game's gamertag
+    report(bad, 'a gamertag read from the game comes back as ZALIAS%s and goes out as its bytes' % tm,
+           plasma.from_wire(raw) == 'ZALIAS' + tm and plasma.wire('ZALIAS' + tm) == ('ZALIAS' + tm).encode('utf-8') and
+           plasma.wire(raw) == raw.encode('latin-1') and plasma.from_wire('Gamer123') == 'Gamer123')
     return bad
 
 
@@ -461,6 +476,18 @@ async def team_checks(port):
     r = await zal.name('ThatZaliaSGuy')
     report(bad, '... and as ThatZaliaSGuy with the same code', r.get('name') == 'ThatZaliaSGuy' and
            r.get('protected') is True, r)
+    tm = '™'
+    r = await zal.name('ZALIAS' + tm)
+    report(bad, '... and as ZALIAS%s with the same code' % tm, r.get('name') == 'ZALIAS' + tm and
+           r.get('protected') is True, r)
+    persona = await fesl_login(port - 9, 'ZALIAS' + tm, zal.pid, '127.0.0.1')
+    report(bad, 'the owner game logs in as ZALIAS%s (%r)' % (tm, persona), plasma.from_wire(persona or '') ==
+           'ZALIAS' + tm, persona)
+    r = await other.name('ZALIAS' + tm, signed=False)
+    report(bad, 'ZALIAS%s is refused to others' % tm, r.get('name') != 'ZALIAS' + tm and r.get('team_name') is True, r)
+    r = await other.name('Gamer12' + tm, signed=False)
+    report(bad, 'another player may end a name of their own with the sign (Gamer12%s)' % tm,
+           r.get('name') == 'Gamer12' + tm and not r.get('team_name'), r)
     r = await other.name('ThatZaliaSGuy', signed=False)
     report(bad, 'ThatZaliaSGuy is refused to others', r.get('name') != 'ThatZaliaSGuy' and r.get('team_name') is True, r)
     r = await other.name('Zalias2', signed=False)

@@ -298,8 +298,9 @@ class Bf1943App : public rex::ReXApp {
       // NXR_SHADER_TEST=1 (a developer's check): the renderer's CMAA shaders compiled, the count of failures the
       // exit code, and no game.
       if (const char* v = std::getenv("NXR_SHADER_TEST"); v && *v == '1') std::_Exit(native_x_renderer::TestUtilityShaders());
-      // An imported HD texture pack (Settings > Graphics): the renderer reads it when HD textures are on (D149).
-      {
+      // An imported HD texture pack (Settings > Graphics): the renderer reads it when HD textures are on (D149). Benched
+      // since v0.4.7.4 (game_menu.cpp kHdTexturesShown): no pack is given, so a player who had them on draws the game's own.
+      if (false) {
         std::error_code ec;
         const auto pack = p.user_data_root / "hd" / "bf1943-hd.bfhd";
         if (std::filesystem::exists(pack, ec)) rex::cvar::SetFlagByName("native_x_renderer_hd_pack", pack.string());

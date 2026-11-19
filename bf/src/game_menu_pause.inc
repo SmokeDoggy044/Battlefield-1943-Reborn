@@ -3,8 +3,8 @@
 // replacement whose rows do what they say, by the game's own commands): the match goes on behind, darkened; the rows
 // in a column at the left under PAUSED in the game's own lettering; the field report card at the right (the server,
 // its map and movement, the time in the field, the squad, the comms with their keys, the last chat lines, a private
-// match's reach); Exit Game and Suicide ask first; My Squad finds an open squad or leaves it. Settings opens the
-// settings page (game_menu_settings.inc) and comes back here. The mockup (runs\ui-designs, build2.py a1_pause) is
+// match's reach); Exit Game and Redeploy (the game's suicide) ask first; My Squad finds an open squad or leaves it.
+// Settings opens the settings page (game_menu_settings.inc) and comes back here. The mockup (runs\ui-designs, build2.py a1_pause) is
 // 1920 x 1080; sizes here are its at 720 lines, on the Stage.
 
   double match_began_ = -1;  // the match's first frame (UpdateWalk): the field report's time in the field
@@ -52,9 +52,9 @@
 
   // The field report: the server, its map and movement, the time in the field, the squad, the comms and their keys,
   // the last chat lines, a private match hosted here.
-  void FieldReport(ImDrawList* d, const Stage& st, const Input& in, const ServerInfo* sv, const std::string& map, int minutes) {
+  void FieldReport(ImDrawList* d, const Stage& st, const Input& in, const ServerInfo* sv, const std::string& map, int minutes,
+                   ImVec2 a, ImVec2 b) {
     const kit::Fonts& f = kit::GetFonts();
-    const ImVec2 a = st.P(800, 93), b = st.P(1232, 503);
     kit::PaperArt(d, a, b);
     const float x = a.x + st(20), x1 = b.x - st(20), wrap = x1 - x;
     float y = a.y + st(18);
@@ -175,7 +175,8 @@
     kit::GameText(d, kit::GameFont::kHeadline, st(44), lst.P(48, 118), kit::kCream, "MENU");
     d->AddRectFilled(lst.P(48, 190), lst.P(90, 194), kit::kStamp);
     // The prompts first: a click on one is that button's press for the rest of the frame.
-    Prompts(d, lst, lst.P(48, 662), {{kit::Button::kA, "SELECT"}, {kit::Button::kB, pause_confirm_ >= 0 ? "BACK" : "RESUME"}}, in, 15);
+    Prompts(d, lst, lst.P(48, 662),
+            {{kit::Button::kA, "SELECT"}, {kit::Button::kB, pause_confirm_ >= 0 ? "BACK" : "RESUME"}, {kit::Button::kRB, "PAGE"}}, in, 15);
     MenuFoot(d, rst);
     // ---- the rows
     const bool rows_have_input = pause_confirm_ < 0;
@@ -218,16 +219,50 @@
       y += h;
       if (hover && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) clicked = i;
     }
-    // ---- the field report, and the map beside it
-    FieldReport(d, rst, in, sv, map, minutes);
+    // ---- the right side's two pages (TekRantGaming, 18 Nov 2026, his pick of the mockup: "The pause menu map needs to
+    // be large ... a left bumper, right bumper, page switcher between the field report and the minimap, but the minimap
+    // should be the first one"): MAP and FIELD REPORT under LB and RB (Q and E), each on the whole right side, the map
+    // first whenever the pause opens (ShowPause).
     {
-      const float mx0 = lst.P(436, 0).x, mx1 = rst.P(788, 0).x;
-      // 4:3 ("a large 4:3 aspect, not a 1:1 square"): as wide as the room, as tall as the page allows
-      const float mw = std::max(st(260), std::min(mx1 - mx0 - st(16), st(640 - 93 - 78) * 4.0f / 3.0f));
-      ImVec2 box[2];
-      box[0] = ImVec2((mx0 + mx1 - mw - st(16)) * 0.5f, st.P(0, 93).y);
-      box[1] = ImVec2(box[0].x + mw + st(16), box[0].y + mw * 0.75f + st(78));
-      PauseMap(d, io, st, in, rows_have_input, box);
+      const float px0 = lst.P(436, 0).x, px1 = rst.P(1232, 0).x;
+      const float tab_y = st.P(0, 70).y, top = st.P(0, 100).y, bottom = st.P(0, 640).y;
+      if (rows_have_input && (in.prev_tab || in.next_tab)) {
+        pause_page_ = 1 - pause_page_;
+        REXLOG_INFO("BF pause: page {}", pause_page_ == 0 ? "map" : "field report");
+      }
+      // The tabs: LB, MAP, FIELD REPORT, RB; the page shown in cream over a red rule, a click on a name opens it. Over
+      // a dark band as the column's, so the game's score bars behind (the HUD's top) do not show through the names.
+      d->AddRectFilled(ImVec2(px0 - st(8), tab_y - st(20)), ImVec2(std::min(px1, rst.P(925, 0).x), top - st(2)),
+                      IM_COL32(13, 15, 11, 236));  // past the score bars, short of the match line and the player's card
+      float tx = px0;
+      const float gh = st(18);
+      tx += kit::Glyph(d, PromptStyle(), kit::Button::kLB, KeyFor(kit::Button::kLB), ImVec2(tx, tab_y + st(10)), gh) + st(12);
+      const char* const names[2] = {"MAP", "FIELD REPORT"};
+      for (int i = 0; i < 2; ++i) {
+        const float size = st(19), w = kit::GameTextWidth(kit::GameFont::kHeadlineMedium, size, names[i], st(1));
+        const ImVec2 t0(tx, tab_y), t1(tx + w, tab_y + st(22));
+        const bool on = pause_page_ == i, hover = rows_have_input && ImGui::IsMouseHoveringRect(t0, t1);
+        kit::GameText(d, kit::GameFont::kHeadlineMedium, size, t0, on ? kit::kCream : hover ? kit::kKhaki : kit::kKhakiDim, names[i], st(1));
+        if (on) d->AddRectFilled(ImVec2(t0.x, t1.y + st(3)), ImVec2(t1.x, t1.y + st(6)), kit::kStamp);
+        if (hover && !on && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+          pause_page_ = i;
+          REXLOG_INFO("BF pause: page {} (a click)", i == 0 ? "map" : "field report");
+        }
+        tx = t1.x + st(22);
+      }
+      kit::Glyph(d, PromptStyle(), kit::Button::kRB, KeyFor(kit::Button::kRB), ImVec2(tx - st(8), tab_y + st(10)), gh);
+      const ImVec2 card0(px0, top), card1(px1, bottom);
+      kit::PaperArt(d, card0, card1);
+      if (pause_page_ == 1) {
+        FieldReport(d, rst, in, sv, map, minutes, card0, card1);
+      } else {
+        // 4:3 ("a large 4:3 aspect, not a 1:1 square"), as large as the card allows, in its middle.
+        const float mw = std::max(st(260), std::min(px1 - px0 - st(48), (bottom - top - st(12) - st(78)) * 4.0f / 3.0f));
+        ImVec2 box[2];
+        box[0] = ImVec2((px0 + px1 - mw - st(16)) * 0.5f, top + st(6));
+        box[1] = ImVec2(box[0].x + mw + st(16), box[0].y + mw * 0.75f + st(78));
+        PauseMap(d, io, st, in, rows_have_input, box, false);
+      }
     }
     // ---- the actions
     if (rows_have_input && in.accept) clicked = pause_row_;
@@ -265,10 +300,10 @@
       if (r == 0) pause_confirm_ = -1;
     } else if (pause_confirm_ >= 0) {
       const bool exit = pause_confirm_ == kPauseExit;
-      const int r = PauseCard(d, io, st, in, clicked >= 0, exit ? "EXIT GAME" : "SUICIDE", exit ? "LEAVE THIS MATCH?" : "END THIS LIFE?",
+      const int r = PauseCard(d, io, st, in, clicked >= 0, exit ? "EXIT GAME" : "REDEPLOY", exit ? "LEAVE THIS MATCH?" : "REDEPLOY NOW?",
                               exit ? (pm_hosting_ ? "You go back to the main menu, and your custom match ends for everyone in it."
                                                   : "You go back to the main menu. Your score in this round stays with the server.")
-                                   : "Your soldier dies and you pick a new spawn point. It counts as a death.",
+                                   : "Your soldier leaves the field and you pick a new spawn point. It counts as a death.",
                               "YES", kit::Button::kA, "NO", kit::Button::kB);
       if (r == 1) {
         REXLOG_INFO("BF pause: {} chosen (the game's own command)", exit ? "Exit Game" : "Suicide");
