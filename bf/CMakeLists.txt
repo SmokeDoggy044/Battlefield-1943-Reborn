@@ -77,6 +77,7 @@ set(BF1943_SOURCES
     src/input_settings.cpp
     src/perf_overlay.cpp
     src/audio_settings.cpp
+    src/ea_voice_cull.cpp
     src/ea_mixer_ready.cpp
     src/auto_join.cpp
     src/comms.cpp
